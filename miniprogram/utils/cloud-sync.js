@@ -1,4 +1,5 @@
 const USER_STORAGE_KEY = "dietUser";
+const diet = require("./diet");
 
 let syncTimer = null;
 
@@ -65,6 +66,18 @@ function fetchDietData() {
     .catch(() => ({ localOnly: true, message: "云端数据读取失败" }));
 }
 
+function buildDietPayload(payload = {}) {
+  return {
+    openid: payload.openid || "",
+    profile: payload.profile || diet.readProfile(),
+    foods: Array.isArray(payload.foods) ? payload.foods : diet.readFoodCatalog(),
+    todayMeals: Array.isArray(payload.todayMeals) ? payload.todayMeals : diet.readTodayMeals(),
+    dailyMeals: payload.dailyMeals && typeof payload.dailyMeals === "object" ? payload.dailyMeals : diet.readDailyMealHistory(),
+    energyUnit: payload.energyUnit || diet.readEnergyUnit(),
+    updatedAt: Date.now()
+  };
+}
+
 function loginWithWechat(payload = {}) {
   return wechatLogin()
     .then(() => resolveOpenId()
@@ -79,9 +92,14 @@ function loginWithWechat(payload = {}) {
         };
         saveStoredUser(user);
         return fetchDietData().then((cloudData) => {
-          const hasCloudProfile = cloudData && cloudData.profile && Object.keys(cloudData.profile).length > 0;
-          const hasCloudFoods = cloudData && Array.isArray(cloudData.foods) && cloudData.foods.length > 0;
-          if (hasCloudProfile || hasCloudFoods) {
+          const hasCloudProfile = cloudData && (cloudData.hasProfileData || (cloudData.profile && Object.keys(cloudData.profile).length > 0));
+          const hasCloudFoods = cloudData && (cloudData.hasFoodData || (Array.isArray(cloudData.foods) && cloudData.foods.length > 0));
+          const hasCloudMeals = cloudData && (cloudData.hasMealData || (
+            (Array.isArray(cloudData.todayMeals) && cloudData.todayMeals.length > 0) ||
+            (cloudData.dailyMeals && Object.keys(cloudData.dailyMeals).length > 0)
+          ));
+          const hasCloudUnit = cloudData && (cloudData.energyUnit === "kcal" || cloudData.energyUnit === "kJ");
+          if (hasCloudProfile || hasCloudFoods || hasCloudMeals || hasCloudUnit) {
             return {
               user,
               cloudData,
@@ -95,12 +113,10 @@ function loginWithWechat(payload = {}) {
 
 function syncDietData(payload = {}) {
   const user = getStoredUser();
-  const data = {
-    openid: user && user.openid ? user.openid : "",
-    profile: payload.profile || {},
-    foods: Array.isArray(payload.foods) ? payload.foods : [],
-    updatedAt: Date.now()
-  };
+  const data = buildDietPayload({
+    ...payload,
+    openid: user && user.openid ? user.openid : ""
+  });
   wx.setStorageSync("dietLastSyncPayload", data);
   if (!user) {
     return Promise.resolve({ localOnly: true, message: "未登录，已保存在本机" });
@@ -121,6 +137,7 @@ function queueSyncDietData(payload = {}, delay = 700) {
 }
 
 module.exports = {
+  buildDietPayload,
   clearStoredUser,
   fetchDietData,
   getStoredUser,

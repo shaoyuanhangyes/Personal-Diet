@@ -1,4 +1,5 @@
 const diet = require("../../utils/diet");
+const cloudSync = require("../../utils/cloud-sync");
 
 Page({
   data: {
@@ -107,6 +108,16 @@ Page({
     if (homePage) homePage.refreshFromMealChange();
   },
 
+  syncMeals() {
+    cloudSync.queueSyncDietData({
+      profile: diet.readProfile(),
+      foods: diet.readFoodCatalog(),
+      todayMeals: diet.readTodayMeals(),
+      dailyMeals: diet.readDailyMealHistory(),
+      energyUnit: diet.readEnergyUnit()
+    });
+  },
+
   addMeal() {
     const food = this.data.foods[this.data.selectedIndex];
     const quantity = Number(this.data.quantity || 0);
@@ -128,6 +139,7 @@ Page({
     const formattedMeals = this.formatMeals(nextMeals);
     diet.saveTodayMeals(nextMeals);
     this.notifyHomeRefresh();
+    this.syncMeals();
     this.setData({
       meals: formattedMeals,
       hasMeals: formattedMeals.length > 0,
@@ -144,6 +156,7 @@ Page({
     const formattedMeals = this.formatMeals(meals);
     diet.saveTodayMeals(meals);
     this.notifyHomeRefresh();
+    this.syncMeals();
     this.setData({
       meals: formattedMeals,
       hasMeals: formattedMeals.length > 0,
@@ -156,6 +169,7 @@ Page({
   clearMeals() {
     diet.saveTodayMeals([]);
     this.notifyHomeRefresh();
+    this.syncMeals();
     this.setData({ meals: [], hasMeals: false, noMeals: true, status: "今日餐食已清空" });
     this.renderSummary();
   }

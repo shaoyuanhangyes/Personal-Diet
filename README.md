@@ -6,12 +6,13 @@
 
 - `miniprogram/`：小程序源码
 - `cloudfunctions/login/`：微信登录云函数
-- `cloudfunctions/getDietData/`：读取云端用户资料和食物数据库
-- `cloudfunctions/syncDietData/`：用户资料和食物数据库同步云函数
+- `cloudfunctions/getDietData/`：读取云端用户资料、食物数据库和餐食记录
+- `cloudfunctions/syncDietData/`：用户资料、食物数据库和餐食记录同步云函数
 - `project.config.json`：微信开发者工具项目配置
 
 ## 使用
 
 1. 用微信开发者工具打开当前目录。
 2. 开通云开发后，上传并部署 `login`、`getDietData` 和 `syncDietData` 云函数。
-3. 在小程序内使用微信登录后，会优先读取云端用户资料和食物数据库；没有云端数据时，会把本地资料同步到云数据库。
+3. 在小程序内使用微信登录后，会优先读取云端用户资料、食物数据库、今日餐食和历史餐食；没有云端数据时，会把本地资料同步到云数据库。
+4. 云函数会自动确保 `diet_user_profiles`、`diet_food_catalogs`、`diet_daily_meals` 三个集合存在。

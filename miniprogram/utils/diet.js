@@ -261,6 +261,7 @@ module.exports = {
   readTodayMeals,
   round,
   saveFoodCatalog,
+  saveDailyMealHistory,
   saveProfile,
   saveTodayMeals,
   setStorage,

@@ -111,6 +111,7 @@ Page({
     wx.setStorageSync("dietEnergyUnit", unit);
     this.setData({ unit });
     this.renderFoods();
+    this.syncFoodCatalog();
   },
 
   selectFood(event) {

@@ -69,13 +69,22 @@ Page({
     this.setData({ loginButtonText: "登录中", loginStatus: "正在调用微信登录..." });
     cloudSync.loginWithWechat({
       profile: this.data.profile,
-      foods: diet.readFoodCatalog()
+      foods: diet.readFoodCatalog(),
+      todayMeals: diet.readTodayMeals(),
+      dailyMeals: diet.readDailyMealHistory(),
+      energyUnit: diet.readEnergyUnit()
     }).then(({ user, syncResult, cloudData }) => {
       const cloudProfile = cloudData && cloudData.profile ? cloudData.profile : null;
       const cloudFoods = cloudData && Array.isArray(cloudData.foods) ? cloudData.foods : null;
+      const cloudTodayMeals = cloudData && Array.isArray(cloudData.todayMeals) ? cloudData.todayMeals : null;
+      const cloudDailyMeals = cloudData && cloudData.dailyMeals ? cloudData.dailyMeals : null;
+      const cloudEnergyUnit = cloudData && (cloudData.energyUnit === "kcal" || cloudData.energyUnit === "kJ") ? cloudData.energyUnit : "";
       const profile = cloudProfile ? { ...diet.readProfile(), ...cloudProfile } : this.data.profile;
       if (cloudProfile) diet.saveProfile(profile);
-      if (cloudFoods && cloudFoods.length > 0) diet.saveFoodCatalog(cloudFoods);
+      if (cloudData && cloudData.hasFoodData && cloudFoods) diet.saveFoodCatalog(cloudFoods);
+      if (cloudData && cloudData.hasMealData && cloudDailyMeals) diet.saveDailyMealHistory(cloudDailyMeals);
+      if (cloudData && cloudData.hasMealData && cloudTodayMeals) diet.saveTodayMeals(cloudTodayMeals);
+      if (cloudEnergyUnit) diet.setStorage("dietEnergyUnit", cloudEnergyUnit);
       this.setData({
         profile,
         sexIndex: profile.sex === "female" ? 1 : 0,
@@ -119,7 +128,10 @@ Page({
     this.setData({ profile, ...extra });
     cloudSync.queueSyncDietData({
       profile,
-      foods: diet.readFoodCatalog()
+      foods: diet.readFoodCatalog(),
+      todayMeals: diet.readTodayMeals(),
+      dailyMeals: diet.readDailyMealHistory(),
+      energyUnit: diet.readEnergyUnit()
     });
   },
 

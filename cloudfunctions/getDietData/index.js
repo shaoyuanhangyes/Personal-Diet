@@ -6,6 +6,20 @@ cloud.init({
 
 const db = cloud.database();
 
+const COLLECTIONS = {
+  profile: "diet_user_profiles",
+  foods: "diet_food_catalogs",
+  dailyMeals: "diet_daily_meals"
+};
+
+async function ensureCollection(name) {
+  try {
+    await db.createCollection(name);
+  } catch (error) {
+    return null;
+  }
+}
+
 async function getDocument(collection, openid) {
   try {
     const result = await db.collection(collection).doc(openid).get();
@@ -22,15 +36,24 @@ exports.main = async (event) => {
     throw new Error("missing openid");
   }
 
-  const [profileDoc, foodDoc] = await Promise.all([
-    getDocument("diet_user_profiles", openid),
-    getDocument("diet_food_catalogs", openid)
+  await Promise.all(Object.keys(COLLECTIONS).map((key) => ensureCollection(COLLECTIONS[key])));
+
+  const [profileDoc, foodDoc, dailyMealsDoc] = await Promise.all([
+    getDocument(COLLECTIONS.profile, openid),
+    getDocument(COLLECTIONS.foods, openid),
+    getDocument(COLLECTIONS.dailyMeals, openid)
   ]);
 
   return {
     ok: true,
     openid,
+    hasProfileData: !!profileDoc,
+    hasFoodData: !!foodDoc,
+    hasMealData: !!dailyMealsDoc,
     profile: profileDoc && profileDoc.profile ? profileDoc.profile : null,
-    foods: foodDoc && Array.isArray(foodDoc.foods) ? foodDoc.foods : []
+    energyUnit: profileDoc && profileDoc.energyUnit ? profileDoc.energyUnit : "",
+    foods: foodDoc && Array.isArray(foodDoc.foods) ? foodDoc.foods : [],
+    todayMeals: dailyMealsDoc && Array.isArray(dailyMealsDoc.todayMeals) ? dailyMealsDoc.todayMeals : [],
+    dailyMeals: dailyMealsDoc && dailyMealsDoc.dailyMeals ? dailyMealsDoc.dailyMeals : {}
   };
 };
