@@ -70,14 +70,25 @@ Page({
     cloudSync.loginWithWechat({
       profile: this.data.profile,
       foods: diet.readFoodCatalog()
-    }).then(({ user, syncResult }) => {
+    }).then(({ user, syncResult, cloudData }) => {
+      const cloudProfile = cloudData && cloudData.profile ? cloudData.profile : null;
+      const cloudFoods = cloudData && Array.isArray(cloudData.foods) ? cloudData.foods : null;
+      const profile = cloudProfile ? { ...diet.readProfile(), ...cloudProfile } : this.data.profile;
+      if (cloudProfile) diet.saveProfile(profile);
+      if (cloudFoods && cloudFoods.length > 0) diet.saveFoodCatalog(cloudFoods);
       this.setData({
+        profile,
+        sexIndex: profile.sex === "female" ? 1 : 0,
+        sexLabel: profile.sex === "female" ? "女" : "男",
+        planIndex: profile.plan === "loss" ? 1 : 0,
+        planLabel: profile.plan === "loss" ? "减脂" : "增肌",
         user: { ...user, loggedIn: true, initial: String(user.name).slice(0, 1) },
         loginButtonText: "退出",
         loginStatus: syncResult.message,
         showLoginBody: true,
         showLoginEmpty: false
       });
+      if (this.data.predictionReady) this.renderPrediction();
       wx.showToast({ title: "登录成功", icon: "success" });
     }).catch(() => {
       this.setData({

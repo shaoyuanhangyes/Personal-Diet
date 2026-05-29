@@ -59,6 +59,12 @@ function resolveOpenId() {
   });
 }
 
+function fetchDietData() {
+  return callCloudFunction("getDietData")
+    .then((result) => result && result.result ? result.result : {})
+    .catch(() => ({ localOnly: true, message: "云端数据读取失败" }));
+}
+
 function loginWithWechat(payload = {}) {
   return wechatLogin()
     .then(() => resolveOpenId()
@@ -72,7 +78,18 @@ function loginWithWechat(payload = {}) {
           loginAt: Date.now()
         };
         saveStoredUser(user);
-        return syncDietData(payload).then((syncResult) => ({ user, syncResult }));
+        return fetchDietData().then((cloudData) => {
+          const hasCloudProfile = cloudData && cloudData.profile && Object.keys(cloudData.profile).length > 0;
+          const hasCloudFoods = cloudData && Array.isArray(cloudData.foods) && cloudData.foods.length > 0;
+          if (hasCloudProfile || hasCloudFoods) {
+            return {
+              user,
+              cloudData,
+              syncResult: { localOnly: false, message: "已从云端加载数据" }
+            };
+          }
+          return syncDietData(payload).then((syncResult) => ({ user, syncResult, cloudData: null }));
+        });
       }));
 }
 
@@ -105,6 +122,7 @@ function queueSyncDietData(payload = {}, delay = 700) {
 
 module.exports = {
   clearStoredUser,
+  fetchDietData,
   getStoredUser,
   loginWithWechat,
   queueSyncDietData,
