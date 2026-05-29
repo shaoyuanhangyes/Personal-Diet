@@ -1,0 +1,370 @@
+.toolbar {
+  display: grid;
+  grid-template-columns: 1fr 192rpx;
+  gap: 16rpx;
+  align-items: center;
+}
+
+.add-food-button {
+  width: 88rpx !important;
+  height: 88rpx !important;
+  min-width: 88rpx !important;
+  min-height: 88rpx !important;
+  max-width: 88rpx !important;
+  flex: 0 0 88rpx !important;
+  border-radius: 32rpx;
+  font-size: 34rpx;
+  margin-left: auto;
+  padding: 0;
+  box-shadow: 0 16rpx 44rpx rgba(26, 38, 72, 0.08), inset 0 2rpx 0 rgba(255, 255, 255, 0.82);
+}
+
+.search-input {
+  height: 84rpx;
+  padding: 0 26rpx;
+  border-radius: 28rpx;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1rpx solid rgba(92, 109, 145, 0.14);
+  font-size: 28rpx;
+}
+
+.unit-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4rpx;
+  padding: 6rpx;
+  border-radius: 26rpx;
+  background: rgba(226, 234, 249, 0.78);
+  overflow: hidden;
+}
+
+.unit-option {
+  min-width: 0;
+  height: 72rpx;
+  border-radius: 21rpx;
+  color: #697386;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24rpx;
+  line-height: 1;
+  font-weight: 800;
+}
+
+.unit-option.active {
+  color: #fff;
+  background: linear-gradient(135deg, #12c8ff, #6d5dfc);
+}
+
+.food-page button,
+.add-sheet button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.food-row {
+  position: relative;
+  padding: 20rpx 24rpx;
+  border-top: 1rpx solid rgba(32, 46, 74, 0.08);
+}
+
+.food-row.is-selected {
+  background: linear-gradient(135deg, rgba(18, 200, 255, 0.12), rgba(109, 93, 252, 0.1));
+  box-shadow: inset 6rpx 0 0 rgba(18, 200, 255, 0.78);
+}
+
+.food-main {
+  display: grid;
+  grid-template-columns: 84rpx 1fr;
+  gap: 18rpx;
+  padding-right: 154rpx;
+}
+
+.food-avatar {
+  width: 80rpx;
+  height: 80rpx;
+  border-radius: 28rpx;
+  color: #fff;
+  background: linear-gradient(135deg, #12c8ff, #6d5dfc);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 30rpx;
+  font-weight: 800;
+}
+
+.food-avatar.image {
+  background: transparent;
+}
+
+.food-info {
+  min-width: 0;
+}
+
+.food-title-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-start;
+  gap: 16rpx;
+}
+
+.food-name {
+  min-width: 0;
+  color: #101522;
+  font-size: 30rpx;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.food-energy {
+  display: block;
+  margin-top: 8rpx;
+  color: #6d5dfc;
+  font-size: 24rpx;
+  font-weight: 800;
+}
+
+.food-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10rpx;
+  margin-top: 14rpx;
+}
+
+.food-meta text {
+  padding: 8rpx 12rpx;
+  border-radius: 18rpx;
+  color: #526071;
+  background: rgba(240, 245, 253, 0.92);
+  font-size: 22rpx;
+}
+
+.food-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10rpx;
+  margin-top: 14rpx;
+}
+
+.food-edit-grid input {
+  height: 68rpx;
+  padding: 0 16rpx;
+  border-radius: 20rpx;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1rpx solid rgba(92, 109, 145, 0.14);
+  font-size: 24rpx;
+}
+
+.food-actions {
+  position: absolute;
+  top: 20rpx;
+  right: 20rpx;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8rpx;
+}
+
+.edit-button,
+.delete-button {
+  width: 64rpx;
+  height: 64rpx;
+  border-radius: 24rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.edit-button {
+  background: rgba(109, 93, 252, 0.1);
+}
+
+.delete-button {
+  background: rgba(255, 79, 104, 0.1);
+}
+
+.edit-icon {
+  position: relative;
+  width: 34rpx;
+  height: 34rpx;
+  transform: rotate(-42deg);
+}
+
+.edit-stem {
+  position: absolute;
+  left: 13rpx;
+  top: 4rpx;
+  width: 10rpx;
+  height: 24rpx;
+  border-radius: 6rpx;
+  background: #6d5dfc;
+}
+
+.edit-tip {
+  position: absolute;
+  left: 12rpx;
+  top: 28rpx;
+  width: 0;
+  height: 0;
+  border-left: 7rpx solid transparent;
+  border-right: 7rpx solid transparent;
+  border-top: 9rpx solid #6d5dfc;
+}
+
+.edit-icon.is-done {
+  width: 36rpx;
+  height: 26rpx;
+  transform: rotate(0);
+}
+
+.edit-icon.is-done .edit-stem {
+  left: 8rpx;
+  top: 9rpx;
+  width: 24rpx;
+  height: 12rpx;
+  border-left: 5rpx solid #6d5dfc;
+  border-bottom: 5rpx solid #6d5dfc;
+  border-radius: 0 0 0 4rpx;
+  background: transparent;
+  transform: rotate(-45deg);
+}
+
+.edit-icon.is-done .edit-tip {
+  display: none;
+}
+
+.trash-icon {
+  position: relative;
+  width: 34rpx;
+  height: 38rpx;
+}
+
+.trash-lid {
+  position: absolute;
+  left: 4rpx;
+  top: 0;
+  width: 26rpx;
+  height: 6rpx;
+  border-radius: 5rpx;
+  background: #ff4f68;
+}
+
+.trash-can {
+  position: absolute;
+  left: 6rpx;
+  top: 10rpx;
+  width: 22rpx;
+  height: 25rpx;
+  border: 4rpx solid #ff4f68;
+  border-top-width: 3rpx;
+  border-radius: 3rpx 3rpx 6rpx 6rpx;
+  display: flex;
+  justify-content: center;
+  gap: 4rpx;
+  padding-top: 5rpx;
+}
+
+.trash-line {
+  width: 3rpx;
+  height: 14rpx;
+  border-radius: 3rpx;
+  background: #ff4f68;
+}
+
+.add-sheet {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 20;
+}
+
+.sheet-backdrop {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(5, 10, 24, 0.42);
+}
+
+.sheet-panel {
+  position: absolute;
+  left: 20rpx;
+  right: 20rpx;
+  bottom: 20rpx;
+  max-height: 86vh;
+  padding: 20rpx 24rpx 28rpx;
+  border-radius: 48rpx;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.97), rgba(248, 251, 255, 0.94));
+  box-shadow: 0 -44rpx 108rpx rgba(12, 21, 46, 0.28);
+}
+
+.sheet-grip {
+  width: 72rpx;
+  height: 8rpx;
+  margin: 0 auto 12rpx;
+  border-radius: 999rpx;
+  background: linear-gradient(90deg, rgba(18, 200, 255, 0.5), rgba(109, 93, 252, 0.45));
+}
+
+.sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20rpx;
+}
+
+.icon-button.small {
+  width: 72rpx;
+  height: 72rpx;
+  min-width: 72rpx;
+  min-height: 72rpx;
+  border-radius: 26rpx;
+}
+
+.close-sheet-button {
+  margin-left: auto;
+  flex: 0 0 72rpx;
+}
+
+.image-uploader {
+  height: 132rpx;
+  margin: 18rpx 0;
+  border-radius: 30rpx;
+  color: #6d5dfc;
+  background: rgba(109, 93, 252, 0.08);
+  border: 1rpx dashed rgba(109, 93, 252, 0.28);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28rpx;
+  font-weight: 800;
+  overflow: hidden;
+}
+
+.image-uploader image {
+  width: 100%;
+  height: 100%;
+}
+
+.sheet-form {
+  display: grid;
+  gap: 14rpx;
+}
+
+.sheet-form input {
+  height: 78rpx;
+  padding: 0 22rpx;
+  border-radius: 24rpx;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1rpx solid rgba(92, 109, 145, 0.14);
+  font-size: 26rpx;
+}

@@ -1,0 +1,150 @@
+<view class="page home-page {{calendarOpenClass}}">
+  <view class="app-header">
+    <view class="title-block">
+      <view class="title">首页</view>
+      <view class="subtitle">今天按 <text>{{dayLabel}}</text> 目标跟踪</view>
+    </view>
+    <view class="icon-button calendar-button" bindtap="openCalendar" role="button" aria-label="打开摄入日历">
+      <image class="calendar-icon" src="/images/calendar-purple.png" mode="aspectFit"></image>
+    </view>
+  </view>
+
+  <view class="segmented">
+    <button class="{{trainingActive}}" data-day="training" bindtap="changeDay">力训日</button>
+    <button class="{{restActive}}" data-day="rest" bindtap="changeDay">休息日</button>
+  </view>
+
+  <view class="card">
+    <view class="card-header">
+      <view class="card-title">热量目标（{{dayLabel}}）</view>
+      <button class="quiet-action card-action edit-action" bindtap="goSettings">
+        <view class="edit-glyph">
+          <view class="edit-glyph-body"></view>
+          <view class="edit-glyph-tip"></view>
+        </view>
+        <text>编辑</text>
+      </button>
+    </view>
+    <view class="target-grid">
+      <view class="target-item">
+        <view class="target-label">应吃</view>
+        <view class="target-value primary">{{targetCaloriesText}}</view>
+      </view>
+      <view class="target-item">
+        <view class="target-label">平衡热量</view>
+        <view class="target-value">{{balancedCaloriesText}}</view>
+      </view>
+    </view>
+  </view>
+
+  <view class="card">
+    <view class="card-header">
+      <view class="card-title">今日总摄入</view>
+    </view>
+    <view class="progress-layout">
+      <view class="fitness-ring">
+        <canvas wx:if="{{!calendarVisible}}" type="2d" id="home-ring-canvas" class="ring-canvas"></canvas>
+      </view>
+      <view class="intake-copy">
+        <view class="intake-percent">{{percentText}}</view>
+        <view class="intake-small">/ {{targetCaloriesText}}</view>
+        <view class="intake-small">还可摄入</view>
+        <view class="remain">{{remainingText}}</view>
+      </view>
+    </view>
+
+    <view class="macro-list">
+      <block wx:for="{{macros}}" wx:key="key">
+        <view class="macro-row">
+          <view class="{{item.iconClass}}">
+            <view class="{{item.glyphClass}}">
+              <view class="glyph-piece one"></view>
+              <view class="glyph-piece two"></view>
+              <view class="glyph-piece three"></view>
+            </view>
+          </view>
+          <view class="macro-meta">
+            <view class="macro-top">
+              <text class="macro-name">{{item.name}}</text>
+              <text class="macro-amount">{{item.amount}}</text>
+            </view>
+            <view class="bar"><view class="{{item.barClass}}" style="{{item.percentStyle}}"></view></view>
+          </view>
+          <view class="macro-percent">{{item.percentText}}</view>
+        </view>
+      </block>
+    </view>
+  </view>
+
+  <view class="card meal-list">
+    <view class="card-header">
+      <view class="card-title">今日餐食</view>
+      <button class="quiet-action card-action view-all-action" bindtap="goToday">
+        <text>查看全部</text>
+        <view class="chevron-glyph"></view>
+      </button>
+    </view>
+    <view wx:if="{{noHomeMeals}}" class="empty-state">今日还没有记录餐食</view>
+    <block wx:if="{{hasHomeMeals}}">
+      <block wx:for="{{homeMeals}}" wx:key="id">
+        <view class="meal-row">
+          <view class="food-avatar">{{item.initial}}</view>
+          <view class="meal-info">
+            <view><text class="meal-name">{{item.name}}</text> <text class="meal-serving">{{item.serving}}</text></view>
+            <view class="meal-desc">碳水 {{item.carbs}}g · 蛋白质 {{item.protein}}g · 脂肪 {{item.fat}}g</view>
+          </view>
+          <view class="meal-kcal">{{item.energy}}</view>
+        </view>
+      </block>
+    </block>
+  </view>
+
+  <view wx:if="{{calendarVisible}}" class="calendar-sheet">
+    <view class="calendar-backdrop" bindtap="closeCalendar"></view>
+    <view class="calendar-panel">
+      <view class="sheet-grip"></view>
+      <view class="calendar-head">
+        <view>
+          <view class="calendar-eyebrow">按日期排序</view>
+          <view class="calendar-title">摄入日历</view>
+        </view>
+        <view class="icon-button small calendar-close-button" bindtap="closeCalendar" role="button" aria-label="关闭日历">×</view>
+      </view>
+      <view class="calendar-month-nav">
+        <view class="calendar-nav-button" bindtap="prevMonth" role="button" aria-label="上个月">‹</view>
+        <view class="calendar-month-label">{{calendarMonthLabel}}</view>
+        <view class="calendar-nav-button" bindtap="nextMonth" role="button" aria-label="下个月">›</view>
+      </view>
+      <view class="calendar-weekdays">
+        <text wx:for="{{weekdays}}" wx:key="*this">{{item}}</text>
+      </view>
+      <view class="calendar-grid">
+        <block wx:for="{{calendarDays}}" wx:key="key">
+          <view class="{{item.className}}" data-key="{{item.key}}" bindtap="selectCalendarDay" role="button">
+            <text class="calendar-date-number">{{item.day}}</text>
+            <view class="mini-ring">
+              <view class="{{item.ring.totalClass}}" style="{{item.ring.totalStyle}}"></view>
+              <view class="{{item.ring.carbsClass}}" style="{{item.ring.carbsStyle}}"></view>
+              <view class="{{item.ring.proteinClass}}" style="{{item.ring.proteinStyle}}"></view>
+              <view class="{{item.ring.fatClass}}" style="{{item.ring.fatStyle}}"></view>
+            </view>
+            <text class="calendar-day-energy">{{item.energy}}</text>
+          </view>
+        </block>
+      </view>
+      <view class="calendar-day-summary">
+        <view class="calendar-summary-title">
+          <text>{{calendarSummary.date}}</text>
+          <text class="summary-energy">{{calendarSummary.energy}}</text>
+        </view>
+        <view class="calendar-summary-grid">
+          <view><text>完成度</text><text>{{calendarSummary.percent}}</text></view>
+          <view><text>餐食</text><text>{{calendarSummary.count}}</text></view>
+          <view><text>碳水</text><text>{{calendarSummary.carbs}}</text></view>
+          <view><text>蛋白质</text><text>{{calendarSummary.protein}}</text></view>
+          <view><text>脂肪</text><text>{{calendarSummary.fat}}</text></view>
+        </view>
+      </view>
+    </view>
+  </view>
+</view>

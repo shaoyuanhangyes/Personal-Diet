@@ -1,0 +1,100 @@
+<view class="page food-page">
+  <view class="app-header">
+    <view class="title-block">
+      <view class="title">饮食清单</view>
+      <view class="subtitle">维护今日餐食可选择的食物数据库</view>
+    </view>
+    <view class="icon-button add-food-button" bindtap="openAddSheet" role="button" aria-label="添加食物">＋</view>
+  </view>
+
+  <view class="toolbar">
+    <input class="search-input" placeholder="搜索食物" value="{{search}}" bindinput="inputSearch" />
+    <view class="unit-switch">
+      <view class="unit-option {{kcalActive}}" data-unit="kcal" bindtap="changeUnit" role="button">kcal</view>
+      <view class="unit-option {{kjActive}}" data-unit="kJ" bindtap="changeUnit" role="button">kJ</view>
+    </view>
+  </view>
+
+  <view class="card food-table">
+    <view class="card-header">
+      <view class="card-title">食物数据库</view>
+      <view class="muted">{{foodCountText}}</view>
+    </view>
+    <view wx:if="{{noFoods}}" class="empty-state">没有找到食物</view>
+    <block wx:if="{{hasFoods}}">
+      <block wx:for="{{foods}}" wx:key="id">
+        <view class="{{item.rowClass}}" data-id="{{item.id}}" bindtap="selectFood">
+          <view class="food-main">
+            <view class="food-avatar" wx:if="{{item.noImage}}">{{item.initial}}</view>
+            <image wx:if="{{item.hasImage}}" class="food-avatar image" mode="aspectFill" src="{{item.image}}"></image>
+            <view class="food-info">
+              <view class="food-title-row">
+                <text class="food-name">{{item.name}}</text>
+              </view>
+              <view class="food-energy">{{item.energy}}</view>
+              <view class="food-meta" wx:if="{{item.readonly}}">
+                <text>碳水 {{item.carbsText}}g</text>
+                <text>蛋白质 {{item.proteinText}}g</text>
+                <text>脂肪 {{item.fatText}}g</text>
+                <text>规格 {{item.spec}}</text>
+                <text>默认 {{item.quantity}}{{item.unit}}</text>
+              </view>
+              <view class="food-edit-grid" wx:if="{{item.editing}}">
+                <input data-id="{{item.id}}" data-field="name" value="{{item.name}}" bindinput="editFood" />
+                <input data-id="{{item.id}}" data-field="carbs" type="digit" value="{{item.carbsValue}}" bindinput="editFood" />
+                <input data-id="{{item.id}}" data-field="protein" type="digit" value="{{item.proteinValue}}" bindinput="editFood" />
+                <input data-id="{{item.id}}" data-field="fat" type="digit" value="{{item.fatValue}}" bindinput="editFood" />
+                <input data-id="{{item.id}}" data-field="coefficient" type="digit" value="{{item.coefficientValue}}" bindinput="editFood" />
+                <input data-id="{{item.id}}" data-field="quantity" type="digit" value="{{item.quantityValue}}" bindinput="editFood" />
+                <input data-id="{{item.id}}" data-field="unit" value="{{item.unitValue}}" bindinput="editFood" />
+              </view>
+            </view>
+          </view>
+          <view class="food-actions">
+            <view class="edit-button" data-id="{{item.id}}" catchtap="toggleEdit" role="button" aria-label="编辑食物">
+              <view class="{{item.editIconClass}}">
+                <view class="edit-stem"></view>
+                <view class="edit-tip"></view>
+              </view>
+            </view>
+            <view class="delete-button" data-id="{{item.id}}" catchtap="deleteFood" role="button" aria-label="删除食物">
+              <view class="trash-icon">
+                <view class="trash-lid"></view>
+                <view class="trash-can">
+                  <view class="trash-line"></view>
+                  <view class="trash-line"></view>
+                </view>
+              </view>
+            </view>
+          </view>
+        </view>
+      </block>
+    </block>
+  </view>
+
+  <view wx:if="{{addVisible}}" class="add-sheet">
+    <button class="sheet-backdrop" bindtap="closeAddSheet"></button>
+    <view class="sheet-panel">
+      <view class="sheet-grip"></view>
+      <view class="sheet-head">
+        <view class="card-title">添加食物</view>
+        <view class="icon-button small close-sheet-button" bindtap="closeAddSheet" role="button" aria-label="关闭添加食物">×</view>
+      </view>
+      <view class="image-uploader" bindtap="chooseImage">
+        <image wx:if="{{newFoodHasImage}}" mode="aspectFill" src="{{newFood.image}}"></image>
+        <view wx:if="{{newFoodNoImage}}">上传图片</view>
+      </view>
+      <view class="sheet-form">
+        <input placeholder="食物名称" data-field="name" value="{{newFood.name}}" bindinput="inputNewFood" />
+        <input placeholder="每100g食物包含的碳水克数" type="digit" data-field="carbs" value="{{newFood.carbs}}" bindinput="inputNewFood" />
+        <input placeholder="每100g食物包含的蛋白质克数" type="digit" data-field="protein" value="{{newFood.protein}}" bindinput="inputNewFood" />
+        <input placeholder="每100g食物包含的脂肪克数" type="digit" data-field="fat" value="{{newFood.fat}}" bindinput="inputNewFood" />
+        <input placeholder="规格 独立包装袋标识重量" type="digit" data-field="coefficient" value="{{newFood.coefficient}}" bindinput="inputNewFood" />
+        <input placeholder="推荐填写100 意味着每100g食物的碳蛋脂" type="digit" data-field="quantity" value="{{newFood.quantity}}" bindinput="inputNewFood" />
+        <input placeholder="单位，例如 g / 个" data-field="unit" value="{{newFood.unit}}" bindinput="inputNewFood" />
+        <button class="primary-button" bindtap="addFood">保存食物</button>
+        <view class="status-text">{{status}}</view>
+      </view>
+    </view>
+  </view>
+</view>

@@ -1,0 +1,76 @@
+{
+    "appid": "wxe2433a39c8c44a33",
+    "compileType": "miniprogram",
+    "miniprogramRoot": "miniprogram/",
+    "cloudfunctionRoot": "cloudfunctions/",
+    "libVersion": "3.16.1",
+    "packOptions": {
+        "ignore": [
+            {
+                "value": "assets",
+                "type": "folder"
+            },
+            {
+                "value": "logo_assets_with_web_organized",
+                "type": "folder"
+            },
+            {
+                "value": "scripts",
+                "type": "folder"
+            },
+            {
+                "value": ".idea",
+                "type": "folder"
+            },
+            {
+                "value": "home.html",
+                "type": "file"
+            },
+            {
+                "value": "today-meals.html",
+                "type": "file"
+            },
+            {
+                "value": "food-list.html",
+                "type": "file"
+            },
+            {
+                "value": "settings.html",
+                "type": "file"
+            },
+            {
+                "value": "index.html",
+                "type": "file"
+            },
+            {
+                "value": "DESIGN.md",
+                "type": "file"
+            },
+            {
+                "value": "项目描述.md",
+                "type": "file"
+            }
+        ],
+        "include": []
+    },
+    "setting": {
+        "coverView": true,
+        "es6": true,
+        "postcss": true,
+        "minified": true,
+        "enhance": true,
+        "showShadowRootInWxmlPanel": true,
+        "packNpmRelationList": [],
+        "babelSetting": {
+            "ignore": [],
+            "disablePlugins": [],
+            "outputPath": ""
+        }
+    },
+    "condition": {},
+    "editorSetting": {
+        "tabIndent": "insertSpaces",
+        "tabSize": 4
+    },
+    "srcMiniprogramRoot": "miniprogram/"
+}

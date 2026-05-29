@@ -1,0 +1,33 @@
+.DS_Store
+.idea/
+
+# WeChat DevTools local preferences
+project.private.config.json
+miniprogram/project.private.config.json
+
+# HTML prototype and design-only assets
+index.html
+home.html
+today-meals.html
+food-list.html
+settings.html
+assets/
+logo_assets_with_web_organized/
+scripts/
+DESIGN.md
+项目描述.md
+
+# Root duplicates kept only for local preview compatibility
+/app.js
+/app.json
+/app.wxss
+/images/
+/pages/
+/sitemap.json
+/utils/
+
+# Dependencies and build output
+node_modules/
+miniprogram_npm/
+dist/
+build/

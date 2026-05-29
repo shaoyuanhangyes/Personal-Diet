@@ -1,0 +1,49 @@
+{
+  "pages": [
+    "pages/home/home",
+    "pages/today-meals/today-meals",
+    "pages/food-list/food-list",
+    "pages/settings/settings"
+  ],
+  "window": {
+    "navigationBarTitleText": "Personal Diet",
+    "navigationBarBackgroundColor": "#0A1024",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#EEF4FF",
+    "backgroundTextStyle": "dark"
+  },
+  "tabBar": {
+    "color": "#7D879B",
+    "selectedColor": "#6D5DFC",
+    "backgroundColor": "#FFFFFF",
+    "borderStyle": "white",
+    "list": [
+      {
+        "pagePath": "pages/home/home",
+        "text": "首页",
+        "iconPath": "images/tab-home.png",
+        "selectedIconPath": "images/tab-home-active.png"
+      },
+      {
+        "pagePath": "pages/today-meals/today-meals",
+        "text": "今日餐食",
+        "iconPath": "images/tab-today.png",
+        "selectedIconPath": "images/tab-today-active.png"
+      },
+      {
+        "pagePath": "pages/food-list/food-list",
+        "text": "饮食清单",
+        "iconPath": "images/tab-food.png",
+        "selectedIconPath": "images/tab-food-active.png"
+      },
+      {
+        "pagePath": "pages/settings/settings",
+        "text": "设置",
+        "iconPath": "images/tab-settings.png",
+        "selectedIconPath": "images/tab-settings-active.png"
+      }
+    ]
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}

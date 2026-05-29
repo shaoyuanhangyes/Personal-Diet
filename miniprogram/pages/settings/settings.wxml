@@ -1,0 +1,105 @@
+<view class="page settings-page">
+  <view class="app-header">
+    <view class="title-block">
+      <view class="title">设置</view>
+      <view class="subtitle">配置个人资料和热量目标</view>
+    </view>
+  </view>
+
+  <view class="card login-card">
+    <view class="card-header">
+      <view class="card-title">登录用户</view>
+      <view class="quiet-action login-action" bindtap="toggleLogin" role="button">{{loginButtonText}}</view>
+    </view>
+    <view class="login-body" wx:if="{{showLoginBody}}">
+      <view class="user-avatar">{{user.initial}}</view>
+      <view>
+        <view class="user-name">{{user.name}}</view>
+        <view class="muted">{{user.phone}}</view>
+      </view>
+    </view>
+    <view wx:if="{{showLoginEmpty}}" class="empty-state">使用微信登录后，可以在后台留存个人资料和食物数据库</view>
+    <view class="sync-status" wx:if="{{loginStatus}}">{{loginStatus}}</view>
+  </view>
+
+  <view class="card">
+    <view class="card-header">
+      <view class="card-title">个人资料</view>
+    </view>
+    <view class="profile-form">
+      <view class="field">
+        <view class="field-label">性别</view>
+        <picker mode="selector" range="{{sexLabels}}" value="{{sexIndex}}" bindchange="changeSex">
+          <view class="field-picker">{{sexLabel}}</view>
+        </picker>
+      </view>
+      <view class="field">
+        <view class="field-label">体重 kg</view>
+        <input class="field-input" type="digit" data-field="weight" value="{{profile.weight}}" bindinput="inputProfile" />
+      </view>
+      <view class="field">
+        <view class="field-label">身高 cm</view>
+        <input class="field-input" type="digit" data-field="height" value="{{profile.height}}" bindinput="inputProfile" />
+      </view>
+      <view class="field">
+        <view class="field-label">年龄</view>
+        <input class="field-input" type="number" data-field="age" value="{{profile.age}}" bindinput="inputProfile" />
+      </view>
+      <view class="field">
+        <view class="field-label">方案</view>
+        <picker mode="selector" range="{{planLabels}}" value="{{planIndex}}" bindchange="changePlan">
+          <view class="field-picker">{{planLabel}}</view>
+        </picker>
+      </view>
+      <button class="primary-button" bindtap="predict">预测基础代谢</button>
+    </view>
+  </view>
+
+  <view class="card result-card">
+    <view class="card-header">
+      <view class="card-title">预测结果</view>
+    </view>
+    <view class="result-day-switch segmented">
+      <button class="{{trainingResultActive}}" data-day="training" bindtap="changeResultDay">力训日</button>
+      <button class="{{restResultActive}}" data-day="rest" bindtap="changeResultDay">休息日</button>
+    </view>
+
+    <view wx:if="{{showPredictionEmpty}}" class="empty-state">点击“预测基础代谢”后显示结果</view>
+    <view wx:if="{{showPredictionResult}}" class="result-body">
+      <view class="result-main">
+        <view class="result-copy">
+          <view class="muted">{{resultDayLabel}} 应吃热量</view>
+          <view class="result-energy-line">
+            <text class="result-energy">{{result.energyNumber}}</text>
+            <text class="result-unit">{{result.energyUnit}}</text>
+          </view>
+          <view class="result-note">按当前资料和方案预测 · 根据训练日程调整</view>
+        </view>
+        <view class="result-art">
+          <view class="result-orbit orbit-large"></view>
+          <view class="result-orbit orbit-mid"></view>
+          <view class="result-disc">
+            <view class="result-ring ring-one"></view>
+            <view class="result-ring ring-two"></view>
+            <view class="result-ring ring-three"></view>
+            <view class="result-core"></view>
+          </view>
+        </view>
+      </view>
+      <view class="macro-cards">
+        <view><text>碳水</text><text>{{result.carbs}}</text></view>
+        <view><text>蛋白质</text><text>{{result.protein}}</text></view>
+        <view><text>脂肪</text><text>{{result.fat}}</text></view>
+      </view>
+      <button class="{{detailsToggleClass}}" bindtap="toggleDetails">
+        <text>展开计算详情</text>
+        <text class="chevron"></text>
+      </button>
+      <view wx:if="{{detailsOpen}}" class="detail-grid">
+        <view><text>基础代谢</text><text>{{details.bmr}}</text></view>
+        <view><text>无运动总消耗</text><text>{{details.noExercise}}</text></view>
+        <view><text>{{resultDayLabel}} 平衡热量</text><text>{{details.balanced}}</text></view>
+      </view>
+    </view>
+  </view>
+</view>
