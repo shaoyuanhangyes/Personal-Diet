@@ -7,7 +7,7 @@ Page({
     foodNames: [],
     selectedIndex: 0,
     selectedFoodLabel: "请选择食物",
-    quantity: 100,
+    quantity: 1,
     servingPreview: "",
     summary: { kcal: "0 kcal", carbs: "0 g", protein: "0 g", fat: "0 g" },
     meals: [],
@@ -44,7 +44,7 @@ Page({
     this.setData({
       selectedIndex,
       selectedFoodLabel: selectedFood ? selectedFood.name : "请选择食物",
-      quantity: selectedFood ? selectedFood.quantity : 100,
+      quantity: 1,
       status: ""
     });
     this.renderServingPreview();

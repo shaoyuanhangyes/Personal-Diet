@@ -64,13 +64,20 @@
 
 .result-day-switch {
   margin: 0 28rpx 18rpx;
+  overflow: hidden;
 }
 
 .result-day-switch button {
   display: flex;
   align-items: center;
   justify-content: center;
+  width: 100%;
+  min-width: 0;
   line-height: 1;
+}
+
+.result-day-switch button.active {
+  box-shadow: inset 0 2rpx 0 rgba(255, 255, 255, 0.32);
 }
 
 .result-main {

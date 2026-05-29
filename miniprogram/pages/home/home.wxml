@@ -90,7 +90,10 @@
         <view class="meal-row">
           <view class="food-avatar">{{item.initial}}</view>
           <view class="meal-info">
-            <view><text class="meal-name">{{item.name}}</text> <text class="meal-serving">{{item.serving}}</text></view>
+            <view class="meal-title-line">
+              <text class="meal-name">{{item.name}}</text>
+              <text class="meal-serving">{{item.serving}}</text>
+            </view>
             <view class="meal-desc">碳水 {{item.carbs}}g · 蛋白质 {{item.protein}}g · 脂肪 {{item.fat}}g</view>
           </view>
           <view class="meal-kcal">{{item.energy}}</view>

@@ -63,7 +63,10 @@ function resolveOpenId() {
 function fetchDietData() {
   return callCloudFunction("getDietData")
     .then((result) => result && result.result ? result.result : {})
-    .catch(() => ({ localOnly: true, message: "云端数据读取失败" }));
+    .catch((error) => {
+      const message = error && (error.errMsg || error.message) ? (error.errMsg || error.message) : "云端数据读取失败";
+      return { localOnly: true, message };
+    });
 }
 
 function buildDietPayload(payload = {}) {
@@ -122,10 +125,14 @@ function syncDietData(payload = {}) {
     return Promise.resolve({ localOnly: true, message: "未登录，已保存在本机" });
   }
   return callCloudFunction("syncDietData", data)
-    .then(() => ({ localOnly: false, message: "已同步到后台" }))
+    .then((result) => ({
+      localOnly: false,
+      message: "已同步到后台",
+      detail: result && result.result ? result.result : {}
+    }))
     .catch((error) => ({
       localOnly: true,
-      message: error && error.message ? "云同步未配置，已保存在本机" : "已保存在本机"
+      message: error && (error.errMsg || error.message) ? `云同步失败：${error.errMsg || error.message}` : "已保存在本机"
     }));
 }
 
