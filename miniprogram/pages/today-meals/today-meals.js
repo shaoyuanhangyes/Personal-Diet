@@ -1,5 +1,6 @@
 const diet = require("../../utils/diet");
 const cloudSync = require("../../utils/cloud-sync");
+const MEAL_PAGE_SIZE = 5;
 
 Page({
   data: {
@@ -7,35 +8,67 @@ Page({
     foodNames: [],
     selectedIndex: 0,
     selectedFoodLabel: "请选择食物",
-    quantity: 1,
+    quantity: "",
     servingPreview: "",
     summary: { kcal: "0 kcal", carbs: "0 g", protein: "0 g", fat: "0 g" },
     meals: [],
     hasMeals: false,
     noMeals: true,
-    status: ""
+    currentPage: 1,
+    totalPages: 1,
+    pageText: "第 1 / 1 页",
+    showPagination: false,
+    prevDisabled: true,
+    nextDisabled: true,
+    status: "",
+    addButtonText: "添加到今日餐食",
+    addButtonClass: ""
   },
 
   onShow() {
     this.loadData();
   },
 
+  onUnload() {
+    if (this.addFeedbackTimer) clearTimeout(this.addFeedbackTimer);
+  },
+
   loadData() {
-    const foods = diet.readFoodCatalog();
-    const selectedIndex = Math.min(this.data.selectedIndex, Math.max(foods.length - 1, 0));
+    const currentFood = this.data.foods[this.data.selectedIndex];
+    const foods = diet.sortFoodsByUsage(
+      diet.readFoodCatalog(),
+      diet.readDailyMealHistory()
+    );
+    const currentSignature = currentFood ? diet.foodSignature(currentFood) : "";
+    const matchedIndex = foods.findIndex((food) => diet.foodSignature(food) === currentSignature);
+    const selectedIndex = matchedIndex >= 0
+      ? matchedIndex
+      : Math.min(this.data.selectedIndex, Math.max(foods.length - 1, 0));
     const selectedFood = foods[selectedIndex];
-    const formattedMeals = this.formatMeals(diet.readTodayMeals());
     this.setData({
       foods,
       foodNames: foods.map((food) => food.name),
       selectedIndex,
-      selectedFoodLabel: selectedFood ? selectedFood.name : "暂无食物，请先去饮食清单添加",
-      meals: formattedMeals,
-      hasMeals: formattedMeals.length > 0,
-      noMeals: formattedMeals.length === 0
+      selectedFoodLabel: selectedFood ? selectedFood.name : "暂无食物，请先去饮食清单添加"
     });
+    this.renderMealList(diet.readTodayMeals());
     this.renderSummary();
     this.renderServingPreview();
+  },
+
+  refreshFoodOrder(selectedFood) {
+    const selectedSignature = selectedFood ? diet.foodSignature(selectedFood) : "";
+    const foods = diet.sortFoodsByUsage(
+      diet.readFoodCatalog(),
+      diet.readDailyMealHistory()
+    );
+    const selectedIndex = Math.max(0, foods.findIndex((food) => diet.foodSignature(food) === selectedSignature));
+    this.setData({
+      foods,
+      foodNames: foods.map((food) => food.name),
+      selectedIndex,
+      selectedFoodLabel: foods[selectedIndex] ? foods[selectedIndex].name : "暂无食物，请先去饮食清单添加"
+    });
   },
 
   changeFood(event) {
@@ -44,20 +77,20 @@ Page({
     this.setData({
       selectedIndex,
       selectedFoodLabel: selectedFood ? selectedFood.name : "请选择食物",
-      quantity: 1,
+      quantity: "",
       status: ""
     });
     this.renderServingPreview();
   },
 
   inputQuantity(event) {
-    this.setData({ quantity: Number(event.detail.value || 0), status: "" });
+    this.setData({ quantity: event.detail.value, status: "" });
     this.renderServingPreview();
   },
 
   renderServingPreview() {
     const food = this.data.foods[this.data.selectedIndex];
-    if (!food) {
+    if (!food || String(this.data.quantity).trim() === "") {
       this.setData({ servingPreview: "" });
       return;
     }
@@ -79,7 +112,7 @@ Page({
     });
   },
 
-  formatMeals(meals) {
+  formatMeals(meals, highlightedId = "") {
     const unit = diet.readEnergyUnit();
     return meals.map((meal) => {
       const food = diet.mealFood(meal);
@@ -90,11 +123,66 @@ Page({
         name: food.name,
         serving: diet.formatServingAmount(food),
         energy: diet.formatEnergy(diet.foodEnergy(food), unit),
-        carbs: diet.round(macros.carbs),
-        protein: diet.round(macros.protein),
-        fat: diet.round(macros.fat)
+        carbs: diet.formatDecimal(macros.carbs),
+        protein: diet.formatDecimal(macros.protein),
+        fat: diet.formatDecimal(macros.fat),
+        consumedAtText: diet.formatDateTime(meal.consumedAt),
+        hasConsumedAt: !!meal.consumedAt,
+        rowClass: meal.id === highlightedId ? "is-new" : ""
       };
     });
+  },
+
+  renderMealList(meals, highlightedId = "", requestedPage = this.data.currentPage) {
+    const totalPages = Math.max(1, Math.ceil(meals.length / MEAL_PAGE_SIZE));
+    const currentPage = Math.min(Math.max(1, requestedPage), totalPages);
+    const pageStart = (currentPage - 1) * MEAL_PAGE_SIZE;
+    const pageMeals = meals.slice(pageStart, pageStart + MEAL_PAGE_SIZE);
+    this.setData({
+      meals: this.formatMeals(pageMeals, highlightedId),
+      hasMeals: meals.length > 0,
+      noMeals: meals.length === 0,
+      currentPage,
+      totalPages,
+      pageText: `第 ${currentPage} / ${totalPages} 页`,
+      showPagination: meals.length > MEAL_PAGE_SIZE,
+      prevDisabled: currentPage <= 1,
+      nextDisabled: currentPage >= totalPages
+    });
+  },
+
+  prevPage() {
+    if (this.data.currentPage <= 1) return;
+    this.renderMealList(diet.readTodayMeals(), "", this.data.currentPage - 1);
+  },
+
+  nextPage() {
+    if (this.data.currentPage >= this.data.totalPages) return;
+    this.renderMealList(diet.readTodayMeals(), "", this.data.currentPage + 1);
+  },
+
+  showAddSuccess(meal, food) {
+    if (this.addFeedbackTimer) clearTimeout(this.addFeedbackTimer);
+    if (wx.vibrateShort) {
+      wx.vibrateShort({ type: "light" });
+    }
+    wx.showToast({
+      title: `已添加 ${food.name}`,
+      icon: "success",
+      duration: 1200
+    });
+    this.setData({
+      addButtonText: "已添加",
+      addButtonClass: "is-success"
+    });
+    this.addFeedbackTimer = setTimeout(() => {
+      this.setData({
+        addButtonText: "添加到今日餐食",
+        addButtonClass: "",
+        meals: this.data.meals.map((item) => ({ ...item, rowClass: "" }))
+      });
+      this.addFeedbackTimer = null;
+    }, 1200);
   },
 
   notifyHomeRefresh() {
@@ -114,6 +202,7 @@ Page({
       foods: diet.readFoodCatalog(),
       todayMeals: diet.readTodayMeals(),
       dailyMeals: diet.readDailyMealHistory(),
+      dailySummaries: diet.buildDailySummaries(),
       energyUnit: diet.readEnergyUnit()
     });
   },
@@ -133,36 +222,32 @@ Page({
     const meal = diet.normalizeTodayMeal({
       id: `meal-${Date.now()}`,
       quantity,
+      consumedAt: Date.now(),
       food: { ...food, quantity }
     });
     const nextMeals = [meal, ...meals].filter(Boolean);
-    const formattedMeals = this.formatMeals(nextMeals);
     diet.saveTodayMeals(nextMeals);
     this.notifyHomeRefresh();
     this.syncMeals();
     this.setData({
-      meals: formattedMeals,
-      hasMeals: formattedMeals.length > 0,
-      noMeals: formattedMeals.length === 0,
+      quantity: "",
+      servingPreview: "",
       status: "已添加到今日餐食"
     });
+    this.renderMealList(nextMeals, meal.id, 1);
+    this.refreshFoodOrder(food);
+    this.showAddSuccess(meal, food);
     this.renderSummary();
-    this.renderServingPreview();
   },
 
   deleteMeal(event) {
     const id = event.currentTarget.dataset.id;
     const meals = diet.readTodayMeals().filter((meal) => meal.id !== id);
-    const formattedMeals = this.formatMeals(meals);
     diet.saveTodayMeals(meals);
     this.notifyHomeRefresh();
     this.syncMeals();
-    this.setData({
-      meals: formattedMeals,
-      hasMeals: formattedMeals.length > 0,
-      noMeals: formattedMeals.length === 0,
-      status: "已删除"
-    });
+    this.setData({ status: "已删除" });
+    this.renderMealList(meals);
     this.renderSummary();
   },
 
@@ -170,7 +255,8 @@ Page({
     diet.saveTodayMeals([]);
     this.notifyHomeRefresh();
     this.syncMeals();
-    this.setData({ meals: [], hasMeals: false, noMeals: true, status: "今日餐食已清空" });
+    this.setData({ status: "今日餐食已清空" });
+    this.renderMealList([], "", 1);
     this.renderSummary();
   }
 });

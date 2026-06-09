@@ -70,6 +70,11 @@
         </view>
       </block>
     </block>
+    <view wx:if="{{showPagination}}" class="pagination">
+      <view class="page-button {{prevDisabled ? 'is-disabled' : ''}}" bindtap="prevPage" role="button" aria-disabled="{{prevDisabled}}">上一页</view>
+      <view class="page-text">{{pageText}}</view>
+      <view class="page-button {{nextDisabled ? 'is-disabled' : ''}}" bindtap="nextPage" role="button" aria-disabled="{{nextDisabled}}">下一页</view>
+    </view>
   </view>
 
   <view wx:if="{{addVisible}}" class="add-sheet">
@@ -86,11 +91,11 @@
       </view>
       <view class="sheet-form">
         <input placeholder="食物名称" data-field="name" value="{{newFood.name}}" bindinput="inputNewFood" />
-        <input placeholder="每100g食物包含的碳水克数" type="digit" data-field="carbs" value="{{newFood.carbs}}" bindinput="inputNewFood" />
-        <input placeholder="每100g食物包含的蛋白质克数" type="digit" data-field="protein" value="{{newFood.protein}}" bindinput="inputNewFood" />
-        <input placeholder="每100g食物包含的脂肪克数" type="digit" data-field="fat" value="{{newFood.fat}}" bindinput="inputNewFood" />
-        <input placeholder="规格 独立包装袋标识重量" type="digit" data-field="coefficient" value="{{newFood.coefficient}}" bindinput="inputNewFood" />
-        <input placeholder="推荐填写100 意味着每100g食物的碳蛋脂" type="digit" data-field="quantity" value="{{newFood.quantity}}" bindinput="inputNewFood" />
+        <input placeholder="碳水：g单位填每100g，个单位填每个" type="digit" data-field="carbs" value="{{newFood.carbs}}" bindinput="inputNewFood" />
+        <input placeholder="蛋白质：g单位填每100g，个单位填每个" type="digit" data-field="protein" value="{{newFood.protein}}" bindinput="inputNewFood" />
+        <input placeholder="脂肪：g单位填每100g，个单位填每个" type="digit" data-field="fat" value="{{newFood.fat}}" bindinput="inputNewFood" />
+        <input placeholder="规格重量：每份或每个的克数" type="digit" data-field="coefficient" value="{{newFood.coefficient}}" bindinput="inputNewFood" />
+        <input placeholder="默认数量：g单位建议100，个单位建议1" type="digit" data-field="quantity" value="{{newFood.quantity}}" bindinput="inputNewFood" />
         <input placeholder="单位，例如 g / 个" data-field="unit" value="{{newFood.unit}}" bindinput="inputNewFood" />
         <button class="primary-button" bindtap="addFood">保存食物</button>
         <view class="status-text">{{status}}</view>

@@ -1,5 +1,6 @@
 const kcalToKj = (kcal) => kcal * 4.184;
 const round = (value) => Math.round(Number(value) || 0);
+const formatDecimal = (value, digits = 1) => (Number(value) || 0).toFixed(digits);
 const clampPercent = (value, total) => Math.min(100, Math.max(0, total ? (value / total) * 100 : 0));
 
 const defaultProfile = {
@@ -15,7 +16,7 @@ const defaultFoods = [
   { name: "鸡胸肉（煎）", carbs: 0, protein: 31, fat: 3.6, coefficient: 1, quantity: 120, unit: "g" },
   { name: "牛肉（炒）", carbs: 6.1, protein: 25.7, fat: 10.2, coefficient: 1, quantity: 120, unit: "g" },
   { name: "西兰花（炒）", carbs: 3.6, protein: 2.6, fat: 1, coefficient: 1, quantity: 200, unit: "g" },
-  { name: "鸡蛋（水煮）", carbs: 0.6, protein: 6.3, fat: 5, coefficient: 50, quantity: 50, unit: "个" },
+  { name: "鸡蛋（水煮）", carbs: 0.6, protein: 6.3, fat: 5, coefficient: 50, quantity: 1, unit: "个" },
   { name: "香蕉", carbs: 22.8, protein: 1.2, fat: 0.3, coefficient: 1, quantity: 120, unit: "g" }
 ];
 
@@ -41,6 +42,14 @@ function dateKey(date = new Date()) {
   const month = pad2(date.getMonth() + 1);
   const day = pad2(date.getDate());
   return `${year}-${month}-${day}`;
+}
+
+function formatDateTime(value) {
+  const timestamp = value instanceof Date ? value.getTime() : Number(value);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return "";
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "";
+  return `${dateKey(date)} ${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`;
 }
 
 function parseDateKey(key) {
@@ -75,15 +84,23 @@ function saveProfile(profile) {
 }
 
 function foodSignature(food) {
+  const name = String(food.name || "")
+    .normalize("NFKC")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "");
+  const unit = String(food.unit || "g")
+    .normalize("NFKC")
+    .trim()
+    .toLowerCase();
   return [
-    String(food.name || "").trim().toLowerCase(),
-    Number(food.carbs || 0).toFixed(2),
-    Number(food.protein || 0).toFixed(2),
-    Number(food.fat || 0).toFixed(2),
-    Number(food.coefficient || 1).toFixed(2),
-    Number(food.quantity || 0).toFixed(2),
-    food.unit || "g"
+    name,
+    unit
   ].join("|");
+}
+
+function isCountUnit(unit) {
+  return String(unit || "").trim() === "个";
 }
 
 function normalizeFood(food, index = 0) {
@@ -96,7 +113,7 @@ function normalizeFood(food, index = 0) {
     fat: Number(food.fat || 0),
     coefficient: Number(food.coefficient || 1),
     quantity: Number(food.quantity || 100),
-    unit: String(food.unit || "g"),
+    unit: String(food.unit || "g").trim() || "g",
     image: image.length > 500 ? "" : image
   };
   normalized.signature = foodSignature(normalized);
@@ -105,28 +122,84 @@ function normalizeFood(food, index = 0) {
 
 function readFoodCatalog() {
   const foods = getStorage("dietFoodCatalog", null) || getStorage("dietFoods", null);
-  if (Array.isArray(foods)) return foods.slice(0, 200).map(normalizeFood);
+  if (Array.isArray(foods)) return dedupeFoods(foods);
   return defaultFoods.map(normalizeFood);
 }
 
 function saveFoodCatalog(foods) {
-  const normalized = foods.map(normalizeFood);
+  const normalized = dedupeFoods(foods);
   setStorage("dietFoodCatalog", normalized);
   setStorage("dietFoods", normalized);
 }
 
+function dedupeFoods(foods) {
+  const seen = new Set();
+  return (Array.isArray(foods) ? foods : [])
+    .map(normalizeFood)
+    .filter((food) => {
+      if (seen.has(food.signature)) return false;
+      seen.add(food.signature);
+      return true;
+    })
+    .slice(0, 500);
+}
+
+function sortFoodsByUsage(foods, history = readDailyMealHistory()) {
+  const usage = {};
+  Object.keys(history || {}).sort().forEach((key) => {
+    const meals = Array.isArray(history[key]) ? history[key] : [];
+    meals.forEach((meal) => {
+      if (!meal || !meal.food) return;
+      const signature = foodSignature(meal.food);
+      const current = usage[signature] || { count: 0, lastUsed: "" };
+      current.count += 1;
+      if (key > current.lastUsed) current.lastUsed = key;
+      usage[signature] = current;
+    });
+  });
+
+  return (Array.isArray(foods) ? foods : [])
+    .map((food, index) => ({
+      food,
+      index,
+      usage: usage[foodSignature(food)] || { count: 0, lastUsed: "" }
+    }))
+    .sort((left, right) => (
+      right.usage.count - left.usage.count ||
+      right.usage.lastUsed.localeCompare(left.usage.lastUsed) ||
+      left.index - right.index
+    ))
+    .map((item) => item.food);
+}
+
 function normalizeTodayMeal(meal, index = 0) {
   if (!meal || !meal.food) return null;
+  const quantity = Number(meal.quantity !== undefined ? meal.quantity : meal.food.quantity);
+  const consumedAt = Number(meal.consumedAt || 0);
   return {
     id: meal.id || `meal-${Date.now()}-${index}`,
-    quantity: Number(meal.quantity || meal.food.quantity || 100),
+    quantity: Number.isFinite(quantity) ? quantity : 100,
+    consumedAt: Number.isFinite(consumedAt) && consumedAt > 0 ? consumedAt : 0,
     food: normalizeFood(meal.food, index)
   };
 }
 
 function readTodayMeals() {
+  const today = dateKey();
+  const history = readDailyMealHistory();
+  if (Object.prototype.hasOwnProperty.call(history, today)) {
+    return history[today];
+  }
+
+  const storedDate = getStorage("dietTodayMealsDate", "");
   const meals = getStorage("dietTodayMeals", []);
-  return Array.isArray(meals) ? meals.map(normalizeTodayMeal).filter(Boolean) : [];
+  if (storedDate === today && Array.isArray(meals)) {
+    return meals.map(normalizeTodayMeal).filter(Boolean);
+  }
+
+  setStorage("dietTodayMeals", []);
+  setStorage("dietTodayMealsDate", today);
+  return [];
 }
 
 function readDailyMealHistory() {
@@ -141,7 +214,13 @@ function readDailyMealHistory() {
 }
 
 function saveDailyMealHistory(history) {
-  setStorage("dietDailyMeals", history);
+  const normalized = {};
+  Object.keys(history || {}).forEach((key) => {
+    const meals = history[key];
+    normalized[key] = Array.isArray(meals) ? meals.map(normalizeTodayMeal).filter(Boolean) : [];
+  });
+  setStorage("dietDailyMeals", normalized);
+  saveDailySummaries(buildDailySummaries(normalized));
 }
 
 function syncTodayMealsToHistory(meals) {
@@ -153,6 +232,7 @@ function syncTodayMealsToHistory(meals) {
 function saveTodayMeals(meals) {
   const normalized = meals.map(normalizeTodayMeal).filter(Boolean);
   setStorage("dietTodayMeals", normalized);
+  setStorage("dietTodayMealsDate", dateKey());
   syncTodayMealsToHistory(normalized);
 }
 
@@ -175,14 +255,15 @@ function macroTargets(calories) {
 }
 
 function foodServingGrams(food) {
-  if (food.unit === "个") return Number(food.quantity || 0);
+  if (isCountUnit(food.unit)) return Number(food.quantity || 0);
   return Number(food.quantity || 0) * Number(food.coefficient || 1);
 }
 
 function formatServingAmount(food) {
-  const grams = foodServingGrams(food);
-  const value = Number.isInteger(grams) ? grams : Number(grams.toFixed(1));
-  return `${value}g`;
+  const countUnit = isCountUnit(food.unit);
+  const amount = countUnit ? Number(food.quantity || 0) : foodServingGrams(food);
+  const value = Number.isInteger(amount) ? amount : Number(amount.toFixed(2));
+  return `${value}${countUnit ? "个" : "g"}`;
 }
 
 function formatUnitGrams(food) {
@@ -192,7 +273,7 @@ function formatUnitGrams(food) {
 }
 
 function foodScale(food) {
-  if (food.unit === "个") return Number(food.quantity || 0) / Math.max(1, Number(food.coefficient || 1));
+  if (isCountUnit(food.unit)) return Number(food.quantity || 0);
   return Number(food.quantity || 0) * Number(food.coefficient || 1) / 100;
 }
 
@@ -210,7 +291,7 @@ function foodEnergyPer100g(food) {
 }
 
 function foodReferenceEnergyLabel(food) {
-  return food.unit === "个" ? `每${food.unit}` : "每100g";
+  return isCountUnit(food.unit) ? "每个" : "每100g";
 }
 
 function foodEnergy(food) {
@@ -219,7 +300,8 @@ function foodEnergy(food) {
 }
 
 function mealFood(meal) {
-  return { ...meal.food, quantity: Number(meal.quantity || meal.food.quantity || 0) };
+  const quantity = Number(meal.quantity !== undefined ? meal.quantity : meal.food.quantity);
+  return { ...meal.food, quantity: Number.isFinite(quantity) ? quantity : 0 };
 }
 
 function totalIntake(meals = readTodayMeals()) {
@@ -234,11 +316,42 @@ function totalIntake(meals = readTodayMeals()) {
   }, { kcal: 0, carbs: 0, protein: 0, fat: 0 });
 }
 
+function buildDailySummary(meals) {
+  const intake = totalIntake(Array.isArray(meals) ? meals : []);
+  return {
+    kcal: intake.kcal,
+    carbs: intake.carbs,
+    protein: intake.protein,
+    fat: intake.fat,
+    mealCount: Array.isArray(meals) ? meals.length : 0
+  };
+}
+
+function buildDailySummaries(history = readDailyMealHistory()) {
+  const summaries = {};
+  Object.keys(history || {}).forEach((key) => {
+    summaries[key] = buildDailySummary(history[key]);
+  });
+  return summaries;
+}
+
+function readDailySummaries() {
+  const summaries = getStorage("dietDailySummaries", {});
+  return summaries && typeof summaries === "object" && !Array.isArray(summaries) ? summaries : {};
+}
+
+function saveDailySummaries(summaries) {
+  setStorage("dietDailySummaries", summaries && typeof summaries === "object" ? summaries : {});
+}
+
 module.exports = {
   addDays,
+  buildDailySummaries,
+  buildDailySummary,
   calculateTargets,
   clampPercent,
   dateKey,
+  dedupeFoods,
   energyValue,
   foodEnergy,
   foodEnergyPer100g,
@@ -246,15 +359,19 @@ module.exports = {
   foodReferenceEnergyLabel,
   foodServingGrams,
   foodSignature,
+  formatDecimal,
+  formatDateTime,
   formatEnergy,
   formatServingAmount,
   formatUnitGrams,
+  isCountUnit,
   macroTargets,
   mealFood,
   normalizeFood,
   normalizeTodayMeal,
   parseDateKey,
   readDailyMealHistory,
+  readDailySummaries,
   readEnergyUnit,
   readFoodCatalog,
   readProfile,
@@ -262,9 +379,11 @@ module.exports = {
   round,
   saveFoodCatalog,
   saveDailyMealHistory,
+  saveDailySummaries,
   saveProfile,
   saveTodayMeals,
   setStorage,
+  sortFoodsByUsage,
   syncTodayMealsToHistory,
   totalIntake
 };

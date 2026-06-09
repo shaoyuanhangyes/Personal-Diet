@@ -72,18 +72,25 @@ Page({
       foods: diet.readFoodCatalog(),
       todayMeals: diet.readTodayMeals(),
       dailyMeals: diet.readDailyMealHistory(),
+      dailySummaries: diet.buildDailySummaries(),
       energyUnit: diet.readEnergyUnit()
     }).then(({ user, syncResult, cloudData }) => {
       const cloudProfile = cloudData && cloudData.profile ? cloudData.profile : null;
       const cloudFoods = cloudData && Array.isArray(cloudData.foods) ? cloudData.foods : null;
       const cloudTodayMeals = cloudData && Array.isArray(cloudData.todayMeals) ? cloudData.todayMeals : null;
       const cloudDailyMeals = cloudData && cloudData.dailyMeals ? cloudData.dailyMeals : null;
+      const cloudDailySummaries = cloudData && cloudData.dailySummaries ? cloudData.dailySummaries : null;
       const cloudEnergyUnit = cloudData && (cloudData.energyUnit === "kcal" || cloudData.energyUnit === "kJ") ? cloudData.energyUnit : "";
       const profile = cloudProfile ? { ...diet.readProfile(), ...cloudProfile } : this.data.profile;
       if (cloudProfile) diet.saveProfile(profile);
       if (cloudData && cloudData.hasFoodData && cloudFoods) diet.saveFoodCatalog(cloudFoods);
-      if (cloudData && cloudData.hasMealData && cloudDailyMeals) diet.saveDailyMealHistory(cloudDailyMeals);
-      if (cloudData && cloudData.hasMealData && cloudTodayMeals) diet.saveTodayMeals(cloudTodayMeals);
+      if (cloudData && cloudData.hasMealData && cloudDailyMeals) {
+        diet.saveDailyMealHistory({ ...diet.readDailyMealHistory(), ...cloudDailyMeals });
+      }
+      if (cloudDailySummaries) {
+        diet.saveDailySummaries({ ...diet.readDailySummaries(), ...cloudDailySummaries });
+      }
+      if (cloudData && cloudData.hasTodayData && cloudTodayMeals) diet.saveTodayMeals(cloudTodayMeals);
       if (cloudEnergyUnit) diet.setStorage("dietEnergyUnit", cloudEnergyUnit);
       this.setData({
         profile,
@@ -131,6 +138,7 @@ Page({
       foods: diet.readFoodCatalog(),
       todayMeals: diet.readTodayMeals(),
       dailyMeals: diet.readDailyMealHistory(),
+      dailySummaries: diet.buildDailySummaries(),
       energyUnit: diet.readEnergyUnit()
     });
   },
