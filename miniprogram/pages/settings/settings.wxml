@@ -99,6 +99,7 @@
         <view><text>基础代谢</text><text>{{details.bmr}}</text></view>
         <view><text>无运动总消耗</text><text>{{details.noExercise}}</text></view>
         <view><text>{{resultDayLabel}} 平衡热量</text><text>{{details.balanced}}</text></view>
+        <view><text>{{resultDayLabel}} 应吃热量</text><text>{{details.target}}</text></view>
       </view>
     </view>
   </view>

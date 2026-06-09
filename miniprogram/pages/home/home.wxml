@@ -78,7 +78,7 @@
 
   <view class="card meal-list">
     <view class="card-header">
-      <view class="card-title">今日餐食</view>
+      <view class="card-title">摄入记录</view>
       <button class="quiet-action card-action view-all-action" bindtap="goToday">
         <text>查看全部</text>
         <view class="chevron-glyph"></view>
@@ -95,6 +95,7 @@
               <text class="meal-serving">{{item.serving}}</text>
             </view>
             <view class="meal-desc">碳水 {{item.carbs}}g · 蛋白质 {{item.protein}}g · 脂肪 {{item.fat}}g</view>
+            <view wx:if="{{item.hasConsumedAt}}" class="meal-time">摄入时间 {{item.consumedAtText}}</view>
           </view>
           <view class="meal-kcal">{{item.energy}}</view>
         </view>

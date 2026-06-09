@@ -1,7 +1,7 @@
 const kcalToKj = (kcal) => kcal * 4.184;
 const round = (value) => Math.round(Number(value) || 0);
 const formatDecimal = (value, digits = 1) => (Number(value) || 0).toFixed(digits);
-const clampPercent = (value, total) => Math.min(100, Math.max(0, total ? (value / total) * 100 : 0));
+const clampPercent = (value, total) => Math.max(0, total ? (value / total) * 100 : 0);
 
 const defaultProfile = {
   sex: "male",
@@ -246,11 +246,20 @@ function calculateTargets(profile = readProfile()) {
   return { a, b, e1, e2, f1: e1 * factor, f2: e2 * factor };
 }
 
-function macroTargets(calories) {
+function macroTargets(calories, profile = readProfile(), dayType = "training") {
+  const weight = Math.max(0, Number(profile.weight) || 0);
+  const gaining = profile.plan !== "loss";
+  const carbs = weight * (
+    gaining
+      ? (dayType === "rest" ? 3.3 : 4)
+      : (dayType === "rest" ? 2.5 : 3)
+  );
+  const protein = weight * (gaining ? 2 : 1.5);
+  const remainingCalories = Number(calories || 0) - carbs * 4 - protein * 4;
   return {
-    carbs: calories * 0.5 / 4,
-    protein: calories * 0.3 / 4,
-    fat: calories * 0.2 / 9
+    carbs,
+    protein,
+    fat: Math.max(0, remainingCalories / 9)
   };
 }
 

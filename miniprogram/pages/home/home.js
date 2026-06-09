@@ -117,12 +117,13 @@ Page({
     const dayType = this.data.dayType;
     const dayLabel = dayType === "training" ? "力训日" : "休息日";
     const unit = diet.readEnergyUnit();
-    const targets = diet.calculateTargets(diet.readProfile());
+    const profile = diet.readProfile();
+    const targets = diet.calculateTargets(profile);
     const meals = diet.readTodayMeals();
     const intake = diet.totalIntake(meals);
     const targetCalories = dayType === "training" ? targets.f1 : targets.f2;
     const balancedCalories = dayType === "training" ? targets.e1 : targets.e2;
-    const macroTargets = diet.macroTargets(targetCalories);
+    const macroTargets = diet.macroTargets(targetCalories, profile, dayType);
     const totalPercent = diet.clampPercent(intake.kcal, targetCalories);
     const carbsPercent = diet.clampPercent(intake.carbs, macroTargets.carbs);
     const proteinPercent = diet.clampPercent(intake.protein, macroTargets.protein);
@@ -138,6 +139,8 @@ Page({
         carbs: diet.formatDecimal(macros.carbs),
         protein: diet.formatDecimal(macros.protein),
         fat: diet.formatDecimal(macros.fat),
+        consumedAtText: diet.formatDateTime(meal.consumedAt),
+        hasConsumedAt: !!meal.consumedAt,
         energy: diet.formatEnergy(diet.foodEnergy(food), unit)
       };
     });
@@ -172,6 +175,7 @@ Page({
 
   buildMacro(key, name, current, target) {
     const percent = diet.clampPercent(current, target);
+    const barPercent = Math.min(100, percent);
     return {
       key,
       name,
@@ -181,7 +185,7 @@ Page({
       iconClass: `macro-icon ${key}`,
       glyphClass: `macro-glyph ${key}`,
       barClass: `bar-fill ${key}`,
-      percentStyle: `width:${percent}%;`
+      percentStyle: `width:${barPercent}%;`
     };
   },
 
@@ -337,9 +341,10 @@ Page({
 
   dailySummary(key) {
     const meals = this.mealsForDate(key);
-    const targets = diet.calculateTargets(diet.readProfile());
+    const profile = diet.readProfile();
+    const targets = diet.calculateTargets(profile);
     const targetCalories = this.data.dayType === "training" ? targets.f1 : targets.f2;
-    const macroTargets = diet.macroTargets(targetCalories);
+    const macroTargets = diet.macroTargets(targetCalories, profile, this.data.dayType);
     const intake = diet.totalIntake(meals);
     return {
       meals,

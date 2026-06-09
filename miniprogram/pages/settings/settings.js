@@ -30,10 +30,12 @@ Page({
 
   onShow() {
     const profile = diet.readProfile();
+    const resultDay = wx.getStorageSync("dietDayType") || "training";
     const user = cloudSync.getStoredUser();
     const userData = user ? { ...user, loggedIn: true, initial: String(user.name || "?").slice(0, 1) } : { loggedIn: false };
     this.setData({
       profile,
+      resultDay,
       sexIndex: profile.sex === "female" ? 1 : 0,
       sexLabel: profile.sex === "female" ? "女" : "男",
       planIndex: profile.plan === "loss" ? 1 : 0,
@@ -42,8 +44,8 @@ Page({
       loginButtonText: user ? "退出" : "微信登录",
       showLoginBody: !!user,
       showLoginEmpty: !user,
-      trainingResultActive: this.data.resultDay === "training" ? "active" : "",
-      restResultActive: this.data.resultDay === "rest" ? "active" : "",
+      trainingResultActive: resultDay === "training" ? "active" : "",
+      restResultActive: resultDay === "rest" ? "active" : "",
       showPredictionEmpty: !this.data.predictionReady,
       showPredictionResult: this.data.predictionReady
     });
@@ -154,6 +156,7 @@ Page({
 
   changeResultDay(event) {
     const resultDay = event.currentTarget.dataset.day;
+    wx.setStorageSync("dietDayType", resultDay);
     this.setData({
       resultDay,
       trainingResultActive: resultDay === "training" ? "active" : "",
@@ -177,7 +180,7 @@ Page({
     const resultDayLabel = resultDay === "training" ? "力训日" : "休息日";
     const calories = resultDay === "training" ? targets.f1 : targets.f2;
     const balanced = resultDay === "training" ? targets.e1 : targets.e2;
-    const macros = diet.macroTargets(calories);
+    const macros = diet.macroTargets(calories, this.data.profile, resultDay);
     this.setData({
       resultDayLabel,
       result: {
@@ -191,7 +194,8 @@ Page({
       details: {
         bmr: diet.formatEnergy(targets.a, unit),
         noExercise: diet.formatEnergy(targets.b, unit),
-        balanced: diet.formatEnergy(balanced, unit)
+        balanced: diet.formatEnergy(balanced, unit),
+        target: diet.formatEnergy(calories, unit)
       }
     });
   }

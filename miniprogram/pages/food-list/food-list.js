@@ -1,6 +1,6 @@
 const diet = require("../../utils/diet");
 const cloudSync = require("../../utils/cloud-sync");
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 5;
 
 const emptyFood = () => ({
   name: "",
