@@ -77,7 +77,8 @@ Page({
 
   onShow() {
     const dayType = wx.getStorageSync("dietDayType") || "training";
-    diet.syncTodayMealsToHistory(diet.readTodayMeals());
+    const todayMeals = diet.readTodayMeals();
+    diet.syncTodayMealsToHistory(todayMeals);
     this.setData({ dayType }, () => {
       this.renderPage();
     });
@@ -92,7 +93,8 @@ Page({
   },
 
   refreshFromMealChange() {
-    diet.syncTodayMealsToHistory(diet.readTodayMeals());
+    const todayMeals = diet.readTodayMeals();
+    diet.syncTodayMealsToHistory(todayMeals);
     this.renderPage();
   },
 
@@ -133,9 +135,9 @@ Page({
         initial: String(food.name || "?").slice(0, 1),
         name: food.name,
         serving: diet.formatServingAmount(food),
-        carbs: diet.round(macros.carbs),
-        protein: diet.round(macros.protein),
-        fat: diet.round(macros.fat),
+        carbs: diet.formatDecimal(macros.carbs),
+        protein: diet.formatDecimal(macros.protein),
+        fat: diet.formatDecimal(macros.fat),
         energy: diet.formatEnergy(diet.foodEnergy(food), unit)
       };
     });

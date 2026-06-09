@@ -1,7 +1,8 @@
 const USER_STORAGE_KEY = "dietUser";
 const diet = require("./diet");
 
-let syncTimer = null;
+const syncTimers = {};
+const pendingSyncPayloads = {};
 
 function getCloudReady() {
   let app = null;
@@ -61,7 +62,7 @@ function resolveOpenId() {
 }
 
 function fetchDietData() {
-  return callCloudFunction("getDietData")
+  return callCloudFunction("getDietData", { todayDate: diet.dateKey() })
     .then((result) => result && result.result ? result.result : {})
     .catch((error) => {
       const message = error && (error.errMsg || error.message) ? (error.errMsg || error.message) : "云端数据读取失败";
@@ -76,6 +77,11 @@ function buildDietPayload(payload = {}) {
     foods: Array.isArray(payload.foods) ? payload.foods : diet.readFoodCatalog(),
     todayMeals: Array.isArray(payload.todayMeals) ? payload.todayMeals : diet.readTodayMeals(),
     dailyMeals: payload.dailyMeals && typeof payload.dailyMeals === "object" ? payload.dailyMeals : diet.readDailyMealHistory(),
+    dailySummaries: payload.dailySummaries && typeof payload.dailySummaries === "object" ? payload.dailySummaries : diet.buildDailySummaries(),
+    todayDate: diet.dateKey(),
+    foodMutation: payload.foodMutation || null,
+    foodMutations: Array.isArray(payload.foodMutations) ? payload.foodMutations : [],
+    syncScope: payload.syncScope || "all",
     energyUnit: payload.energyUnit || diet.readEnergyUnit(),
     updatedAt: Date.now()
   };
@@ -121,15 +127,39 @@ function syncDietData(payload = {}) {
     openid: user && user.openid ? user.openid : ""
   });
   wx.setStorageSync("dietLastSyncPayload", data);
-  if (!user) {
+  const foodOnly = data.syncScope === "foods";
+  if (!user && !foodOnly) {
     return Promise.resolve({ localOnly: true, message: "未登录，已保存在本机" });
   }
   return callCloudFunction("syncDietData", data)
-    .then((result) => ({
-      localOnly: false,
-      message: "已同步到后台",
-      detail: result && result.result ? result.result : {}
-    }))
+    .then((result) => {
+      if (foodOnly) {
+        const sentMutations = [
+          ...(Array.isArray(data.foodMutations) ? data.foodMutations : []),
+          ...(data.foodMutation ? [data.foodMutation] : [])
+        ];
+        const sentIds = new Set(sentMutations.map((mutation) => mutation && mutation.mutationId).filter(Boolean));
+        const sentLegacyKeys = new Set(sentMutations.filter((mutation) => mutation && !mutation.mutationId).map((mutation) => JSON.stringify(mutation)));
+        const pending = wx.getStorageSync("dietPendingFoodMutations");
+        const remaining = Array.isArray(pending)
+          ? pending.filter((mutation) => mutation.mutationId
+            ? !sentIds.has(mutation.mutationId)
+            : !sentLegacyKeys.has(JSON.stringify(mutation)))
+          : [];
+        if (remaining.length) {
+          wx.setStorageSync("dietPendingFoodMutations", remaining);
+          wx.setStorageSync("dietFoodCatalogDirty", true);
+        } else {
+          wx.removeStorageSync("dietPendingFoodMutations");
+          wx.setStorageSync("dietFoodCatalogDirty", false);
+        }
+      }
+      return {
+        localOnly: false,
+        message: "已同步到后台",
+        detail: result && result.result ? result.result : {}
+      };
+    })
     .catch((error) => ({
       localOnly: true,
       message: error && (error.errMsg || error.message) ? `云同步失败：${error.errMsg || error.message}` : "已保存在本机"
@@ -137,9 +167,26 @@ function syncDietData(payload = {}) {
 }
 
 function queueSyncDietData(payload = {}, delay = 700) {
-  clearTimeout(syncTimer);
-  syncTimer = setTimeout(() => {
-    syncDietData(payload).catch(() => {});
+  const channel = payload.syncChannel || "diet";
+  const previous = pendingSyncPayloads[channel] || {};
+  const foodMutations = [
+    ...(Array.isArray(previous.foodMutations) ? previous.foodMutations : []),
+    ...(previous.foodMutation ? [previous.foodMutation] : []),
+    ...(Array.isArray(payload.foodMutations) ? payload.foodMutations : []),
+    ...(payload.foodMutation ? [payload.foodMutation] : [])
+  ].slice(-100);
+  pendingSyncPayloads[channel] = {
+    ...previous,
+    ...payload,
+    foodMutation: null,
+    foodMutations
+  };
+  clearTimeout(syncTimers[channel]);
+  syncTimers[channel] = setTimeout(() => {
+    const pendingPayload = pendingSyncPayloads[channel] || payload;
+    delete pendingSyncPayloads[channel];
+    syncDietData(pendingPayload).catch(() => {});
+    delete syncTimers[channel];
   }, delay);
 }
 

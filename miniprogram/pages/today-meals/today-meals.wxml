@@ -26,10 +26,10 @@
       </view>
       <view class="field">
         <view class="field-label">今日数量</view>
-        <input class="field-input" type="digit" value="{{quantity}}" bindinput="inputQuantity" />
+        <input class="field-input" type="digit" value="{{quantity}}" bindinput="inputQuantity" placeholder="例如 0.25" />
         <view class="field-hint">{{servingPreview}}</view>
       </view>
-      <button class="primary-button add-meal-button" bindtap="addMeal">添加到今日餐食</button>
+      <button class="primary-button add-meal-button {{addButtonClass}}" bindtap="addMeal">{{addButtonText}}</button>
       <view class="status-text">{{status}}</view>
     </view>
   </view>
@@ -42,7 +42,7 @@
     <view wx:if="{{noMeals}}" class="empty-state">还没有添加今日餐食</view>
     <block wx:if="{{hasMeals}}">
       <block wx:for="{{meals}}" wx:key="id">
-        <view class="today-row">
+        <view class="today-row {{item.rowClass}}">
           <view class="food-avatar">{{item.initial}}</view>
           <view class="meal-info">
             <view class="meal-title-line">
@@ -50,6 +50,7 @@
               <text class="meal-serving">{{item.serving}}</text>
             </view>
             <view class="meal-desc">{{item.energy}} · 碳水 {{item.carbs}}g · 蛋白质 {{item.protein}}g · 脂肪 {{item.fat}}g</view>
+            <view wx:if="{{item.hasConsumedAt}}" class="meal-time">摄入时间 {{item.consumedAtText}}</view>
           </view>
           <view class="delete-button" data-id="{{item.id}}" bindtap="deleteMeal" role="button" aria-label="删除餐食">
             <view class="trash-icon">
@@ -63,5 +64,10 @@
         </view>
       </block>
     </block>
+    <view wx:if="{{showPagination}}" class="meal-pagination">
+      <view class="meal-page-button {{prevDisabled ? 'is-disabled' : ''}}" bindtap="prevPage" role="button" aria-disabled="{{prevDisabled}}">上一页</view>
+      <view class="meal-page-text">{{pageText}}</view>
+      <view class="meal-page-button {{nextDisabled ? 'is-disabled' : ''}}" bindtap="nextPage" role="button" aria-disabled="{{nextDisabled}}">下一页</view>
+    </view>
   </view>
 </view>

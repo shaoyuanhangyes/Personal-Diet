@@ -11,6 +11,7 @@ const COLLECTIONS = {
   foods: "diet_food_catalogs",
   dailyMeals: "diet_daily_meals"
 };
+const SHARED_FOOD_DOCUMENT = "shared";
 
 async function ensureCollection(name) {
   try {
@@ -40,7 +41,32 @@ async function getDocument(collection, openid) {
   }
 }
 
-exports.main = async (event) => {
+function foodKey(food) {
+  const name = String(food && food.name || "")
+    .normalize("NFKC")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "");
+  const unit = String(food && food.unit || "g")
+    .normalize("NFKC")
+    .trim()
+    .toLowerCase();
+  return [
+    name,
+    unit
+  ].join("|");
+}
+
+function normalizeFood(food) {
+  return {
+    ...food,
+    name: String(food && food.name || "未命名食物").normalize("NFKC").trim(),
+    unit: String(food && food.unit || "g").normalize("NFKC").trim() || "g",
+    signature: foodKey(food)
+  };
+}
+
+exports.main = async (event = {}) => {
   const wxContext = cloud.getWXContext();
   const openid = wxContext.OPENID || event.openid;
   if (!openid) {
@@ -49,23 +75,51 @@ exports.main = async (event) => {
 
   const collectionResults = await Promise.all(Object.keys(COLLECTIONS).map((key) => ensureCollection(COLLECTIONS[key])));
 
-  const [profileDoc, foodDoc, dailyMealsDoc] = await Promise.all([
+  const todayDate = /^\d{4}-\d{2}-\d{2}$/.test(String(event.todayDate || "")) ? event.todayDate : "";
+  const [profileDoc, sharedFoodDoc, legacyFoodDoc, dailyMealsDoc] = await Promise.all([
     getDocument(COLLECTIONS.profile, openid),
+    getDocument(COLLECTIONS.foods, SHARED_FOOD_DOCUMENT),
     getDocument(COLLECTIONS.foods, openid),
     getDocument(COLLECTIONS.dailyMeals, openid)
   ]);
+  const sharedFoods = sharedFoodDoc && Array.isArray(sharedFoodDoc.foods) ? sharedFoodDoc.foods : [];
+  const legacyFoods = legacyFoodDoc && Array.isArray(legacyFoodDoc.foods) ? legacyFoodDoc.foods : [];
+  const foodMap = new Map();
+  sharedFoods.concat(legacyFoods).forEach((food) => {
+    const key = foodKey(food);
+    if (!foodMap.has(key)) foodMap.set(key, normalizeFood(food));
+  });
+  const foods = Array.from(foodMap.values()).slice(0, 500);
+  if (legacyFoods.length || foods.length !== sharedFoods.length) {
+    await db.collection(COLLECTIONS.foods).doc(SHARED_FOOD_DOCUMENT).set({
+      data: {
+        scope: "shared",
+        foods,
+        updatedAt: db.serverDate()
+      }
+    });
+    try {
+      await db.collection(COLLECTIONS.foods).doc(openid).remove();
+    } catch (error) {
+      // Migration is already complete if the legacy document was removed earlier.
+    }
+  }
+  const dailyMeals = dailyMealsDoc && dailyMealsDoc.dailyMeals ? dailyMealsDoc.dailyMeals : {};
+  const hasTodayData = !!todayDate && Object.prototype.hasOwnProperty.call(dailyMeals, todayDate);
 
   return {
     ok: true,
     openid,
     collections: collectionResults,
     hasProfileData: !!profileDoc,
-    hasFoodData: !!foodDoc,
+    hasFoodData: foods.length > 0,
     hasMealData: !!dailyMealsDoc,
+    hasTodayData,
     profile: profileDoc && profileDoc.profile ? profileDoc.profile : null,
     energyUnit: profileDoc && profileDoc.energyUnit ? profileDoc.energyUnit : "",
-    foods: foodDoc && Array.isArray(foodDoc.foods) ? foodDoc.foods : [],
-    todayMeals: dailyMealsDoc && Array.isArray(dailyMealsDoc.todayMeals) ? dailyMealsDoc.todayMeals : [],
-    dailyMeals: dailyMealsDoc && dailyMealsDoc.dailyMeals ? dailyMealsDoc.dailyMeals : {}
+    foods,
+    todayMeals: hasTodayData ? dailyMeals[todayDate] : [],
+    dailyMeals,
+    dailySummaries: dailyMealsDoc && dailyMealsDoc.dailySummaries ? dailyMealsDoc.dailySummaries : {}
   };
 };
