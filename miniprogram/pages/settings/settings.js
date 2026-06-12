@@ -4,6 +4,7 @@ const cloudSync = require("../../utils/cloud-sync");
 Page({
   data: {
     profile: {},
+    weightInput: "",
     sexLabels: ["男", "女"],
     sexIndex: 0,
     sexLabel: "男",
@@ -35,6 +36,7 @@ Page({
     const userData = user ? { ...user, loggedIn: true, initial: String(user.name || "?").slice(0, 1) } : { loggedIn: false };
     this.setData({
       profile,
+      weightInput: String(profile.weight),
       resultDay,
       sexIndex: profile.sex === "female" ? 1 : 0,
       sexLabel: profile.sex === "female" ? "女" : "男",
@@ -96,6 +98,7 @@ Page({
       if (cloudEnergyUnit) diet.setStorage("dietEnergyUnit", cloudEnergyUnit);
       this.setData({
         profile,
+        weightInput: String(profile.weight),
         sexIndex: profile.sex === "female" ? 1 : 0,
         sexLabel: profile.sex === "female" ? "女" : "男",
         planIndex: profile.plan === "loss" ? 1 : 0,
@@ -131,6 +134,20 @@ Page({
     this.updateProfile({ [field]: Number(event.detail.value || 0) });
   },
 
+  inputWeight(event) {
+    const weightInput = event.detail.value || "";
+    const weight = Number(weightInput);
+    if (!weightInput || !Number.isFinite(weight)) {
+      this.setData({ weightInput });
+      return;
+    }
+    this.updateProfile({ weight }, { weightInput });
+  },
+
+  blurWeight() {
+    this.setData({ weightInput: String(this.data.profile.weight) });
+  },
+
   updateProfile(patch, extra = {}) {
     const profile = { ...this.data.profile, ...patch };
     diet.saveProfile(profile);
@@ -152,6 +169,14 @@ Page({
       showPredictionResult: true
     });
     this.renderPrediction();
+    if (wx.vibrateShort) {
+      wx.vibrateShort({ type: "light" });
+    }
+    wx.showToast({
+      title: "预测完成",
+      icon: "success",
+      duration: 1200
+    });
   },
 
   changeResultDay(event) {
