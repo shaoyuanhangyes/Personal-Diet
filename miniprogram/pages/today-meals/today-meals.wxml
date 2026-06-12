@@ -48,7 +48,6 @@
             <view class="meal-title-line">
               <text class="meal-name">{{item.name}}</text>
               <text class="meal-serving">{{item.serving}}</text>
-              <text class="meal-serving meal-portions">{{item.servings}}</text>
             </view>
             <view class="meal-desc">{{item.energy}} · 碳水 {{item.carbs}}g · 蛋白质 {{item.protein}}g · 脂肪 {{item.fat}}g</view>
             <view wx:if="{{item.hasConsumedAt}}" class="meal-time">摄入时间 {{item.consumedAtText}}</view>

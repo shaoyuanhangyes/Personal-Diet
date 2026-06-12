@@ -67,7 +67,6 @@ Page({
     calendarOpenClass: "",
     weekdays: ["一", "二", "三", "四", "五", "六", "日"],
     calendarMonthLabel: "",
-    calendarGridClass: "calendar-grid weeks-5",
     calendarDays: [],
     calendarSummary: {}
   },
@@ -129,25 +128,8 @@ Page({
     const carbsPercent = diet.clampPercent(intake.carbs, macroTargets.carbs);
     const proteinPercent = diet.clampPercent(intake.protein, macroTargets.protein);
     const fatPercent = diet.clampPercent(intake.fat, macroTargets.fat);
-    const mergedHomeMeals = [];
-    const homeMealIndexes = Object.create(null);
-    meals.forEach((meal) => {
+    const homeMeals = meals.slice(0, 3).map((meal) => {
       const food = diet.mealFood(meal);
-      const signature = diet.foodSignature(food);
-      const existingIndex = homeMealIndexes[signature];
-      if (existingIndex !== undefined) {
-        const existing = mergedHomeMeals[existingIndex];
-        existing.food.quantity += Number(food.quantity || 0);
-        return;
-      }
-      homeMealIndexes[signature] = mergedHomeMeals.length;
-      mergedHomeMeals.push({
-        id: meal.id,
-        food: { ...food }
-      });
-    });
-    const homeMeals = mergedHomeMeals.map((meal) => {
-      const food = meal.food;
       const macros = diet.foodMacros(food);
       return {
         id: meal.id,
@@ -157,6 +139,8 @@ Page({
         carbs: diet.formatDecimal(macros.carbs),
         protein: diet.formatDecimal(macros.protein),
         fat: diet.formatDecimal(macros.fat),
+        consumedAtText: diet.formatDateTime(meal.consumedAt),
+        hasConsumedAt: !!meal.consumedAt,
         energy: diet.formatEnergy(diet.foodEnergy(food), unit)
       };
     });
@@ -375,13 +359,10 @@ Page({
   renderCalendar() {
     const month = this.calendarMonth || new Date();
     const firstDay = new Date(month.getFullYear(), month.getMonth(), 1);
-    const leadingDays = (firstDay.getDay() + 6) % 7;
-    const daysInMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
-    const weekCount = Math.max(5, Math.ceil((leadingDays + daysInMonth) / 7));
-    const gridStart = diet.addDays(firstDay, -leadingDays);
+    const gridStart = diet.addDays(firstDay, -((firstDay.getDay() + 6) % 7));
     const unit = diet.readEnergyUnit();
     const today = diet.dateKey();
-    const calendarDays = Array.from({ length: weekCount * 7 }, (_, index) => {
+    const calendarDays = Array.from({ length: 42 }, (_, index) => {
       const current = diet.addDays(gridStart, index);
       const key = diet.dateKey(current);
       const summary = this.dailySummary(key);
@@ -407,7 +388,6 @@ Page({
     const selectedDate = diet.parseDateKey(this.selectedCalendarDate);
     this.setData({
       calendarMonthLabel: `${month.getFullYear()}年${month.getMonth() + 1}月`,
-      calendarGridClass: `calendar-grid weeks-${weekCount}`,
       calendarDays,
       calendarSummary: {
         date: `${selectedDate.getMonth() + 1}月${selectedDate.getDate()}日`,

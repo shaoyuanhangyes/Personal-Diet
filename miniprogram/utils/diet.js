@@ -268,16 +268,6 @@ function foodServingGrams(food) {
   return Number(food.quantity || 0) * Number(food.coefficient || 1);
 }
 
-function foodPortions(food) {
-  const specification = Number(food.coefficient || 0);
-  if (!Number.isFinite(specification) || specification <= 0) return 0;
-  const quantity = Number(food.quantity || 0);
-  const weight = isCountUnit(food.unit)
-    ? quantity * specification
-    : foodServingGrams(food);
-  return weight / specification;
-}
-
 function formatServingAmount(food) {
   const countUnit = isCountUnit(food.unit);
   const amount = countUnit ? Number(food.quantity || 0) : foodServingGrams(food);
@@ -375,7 +365,6 @@ module.exports = {
   foodEnergy,
   foodEnergyPer100g,
   foodMacros,
-  foodPortions,
   foodReferenceEnergyLabel,
   foodServingGrams,
   foodSignature,

@@ -122,7 +122,6 @@ Page({
         initial: String(food.name || "?").slice(0, 1),
         name: food.name,
         serving: diet.formatServingAmount(food),
-        servings: `${diet.formatDecimal(diet.foodPortions(food), 2).replace(/\.?0+$/, "")}份`,
         energy: diet.formatEnergy(diet.foodEnergy(food), unit),
         carbs: diet.formatDecimal(macros.carbs),
         protein: diet.formatDecimal(macros.protein),

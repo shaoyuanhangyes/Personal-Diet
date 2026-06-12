@@ -494,9 +494,15 @@
 }
 
 .meal-serving,
-.meal-desc {
+.meal-desc,
+.meal-time {
   color: #697386;
   font-size: 22rpx;
+}
+
+.meal-time {
+  margin-top: 6rpx;
+  color: #8791a3;
 }
 
 .meal-serving {
@@ -642,10 +648,6 @@
   grid-template-rows: repeat(6, minmax(86rpx, 1fr));
   flex: 1 1 auto;
   min-height: 0;
-}
-
-.calendar-grid.weeks-5 {
-  grid-template-rows: repeat(5, minmax(96rpx, 1fr));
 }
 
 .calendar-day {

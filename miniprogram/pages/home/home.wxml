@@ -95,6 +95,7 @@
               <text class="meal-serving">{{item.serving}}</text>
             </view>
             <view class="meal-desc">碳水 {{item.carbs}}g · 蛋白质 {{item.protein}}g · 脂肪 {{item.fat}}g</view>
+            <view wx:if="{{item.hasConsumedAt}}" class="meal-time">摄入时间 {{item.consumedAtText}}</view>
           </view>
           <view class="meal-kcal">{{item.energy}}</view>
         </view>
@@ -121,7 +122,7 @@
       <view class="calendar-weekdays">
         <text wx:for="{{weekdays}}" wx:key="*this">{{item}}</text>
       </view>
-      <view class="{{calendarGridClass}}">
+      <view class="calendar-grid">
         <block wx:for="{{calendarDays}}" wx:key="key">
           <view class="{{item.className}}" data-key="{{item.key}}" bindtap="selectCalendarDay" role="button">
             <text class="calendar-date-number">{{item.day}}</text>

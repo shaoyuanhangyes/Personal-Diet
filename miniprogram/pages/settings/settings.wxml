@@ -35,7 +35,7 @@
       </view>
       <view class="field">
         <view class="field-label">体重 kg</view>
-        <input class="field-input" type="digit" value="{{weightInput}}" bindinput="inputWeight" bindblur="blurWeight" />
+        <input class="field-input" type="digit" data-field="weight" value="{{profile.weight}}" bindinput="inputProfile" />
       </view>
       <view class="field">
         <view class="field-label">身高 cm</view>
