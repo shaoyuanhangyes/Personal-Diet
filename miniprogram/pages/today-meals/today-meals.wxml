@@ -1,4 +1,4 @@
-<view class="page today-page">
+<view class="page today-page" bindtap="handleOutsideTap">
   <view class="app-header">
     <view class="title-block">
       <view class="title">今日餐食</view>
@@ -20,12 +20,28 @@
     <view class="today-form">
       <view class="field">
         <view class="field-label">选择食物</view>
-        <picker mode="selector" range="{{foodNames}}" value="{{selectedIndex}}" bindchange="changeFood">
-          <view class="field-picker">{{selectedFoodLabel}}</view>
-        </picker>
+        <view class="field-picker food-picker-trigger" catchtap="toggleFoodPicker" role="button" aria-label="选择食物">
+          <text class="food-picker-current">{{selectedFoodLabel}}</text>
+          <text class="food-picker-action">{{foodPickerOpen ? '收起' : '展开选择'}}</text>
+        </view>
+        <view wx:if="{{foodPickerOpen}}" class="food-picker-panel">
+          <view class="food-picker-heading">食物清单 · {{foodTiles.length}} 项</view>
+          <scroll-view wx:if="{{foodTiles.length > 0}}" class="food-picker-scroll {{foodTiles.length <= 8 ? 'is-short' : ''}}" scroll-y="true" scroll-into-view="{{foodPickerAnchorId}}">
+            <view class="food-tile-grid">
+              <view wx:for="{{foodTiles}}" wx:key="index" id="food-tile-{{item.index}}" class="food-tile type-{{item.colorGroup}} {{item.index === pendingFoodIndex ? 'is-pending' : ''}}" data-index="{{item.index}}" catchtap="selectFoodTile" role="button" aria-label="待选{{item.name}}">
+                <view class="food-tile-icon"><text class="food-icon-letter">{{item.initial}}</text></view>
+                <view class="food-tile-name"><view class="food-tile-name-text">{{item.name}}</view></view>
+                <text class="food-tile-unit">{{item.unitLabel}}</text>
+              </view>
+            </view>
+          </scroll-view>
+          <view wx:if="{{foodTiles.length > 8}}" class="food-picker-footnote">上下滑动查看更多食物</view>
+          <view wx:if="{{foodTiles.length === 0}}" class="food-picker-empty">请先到饮食清单添加食物</view>
+          <view wx:if="{{foodTiles.length > 0}}" class="food-picker-pending">{{pendingFoodIndex >= 0 ? '已选：' + pendingFoodLabel + '，再点一次或点外部确认' : '轻点卡片预选，再点一次确认'}}</view>
+        </view>
       </view>
       <view class="field">
-        <view class="field-label">今日数量</view>
+        <view class="field-label">今日数量（{{quantityUnitLabel}}）</view>
         <input class="field-input" type="digit" value="{{quantity}}" bindinput="inputQuantity" placeholder="例如 0.25" />
         <view class="field-hint">{{servingPreview}}</view>
       </view>
@@ -43,7 +59,7 @@
     <block wx:if="{{hasMeals}}">
       <block wx:for="{{meals}}" wx:key="id">
         <view class="today-row {{item.rowClass}}">
-          <view class="food-avatar">{{item.initial}}</view>
+          <view class="food-avatar"><text class="food-icon-letter">{{item.initial}}</text></view>
           <view class="meal-info">
             <view class="meal-title-line">
               <text class="meal-name">{{item.name}}</text>

@@ -3,6 +3,7 @@ const diet = require("./diet");
 
 const syncTimers = {};
 const pendingSyncPayloads = {};
+let calendarRefreshPromise = null;
 
 function getCloudReady() {
   let app = null;
@@ -28,6 +29,27 @@ function saveStoredUser(user) {
 
 function clearStoredUser() {
   wx.removeStorageSync(USER_STORAGE_KEY);
+}
+
+function logoutAndClearLocalHistory() {
+  Object.keys(syncTimers).forEach((channel) => {
+    clearTimeout(syncTimers[channel]);
+    delete syncTimers[channel];
+    delete pendingSyncPayloads[channel];
+  });
+  clearStoredUser();
+  [
+    "dietTodayMeals",
+    "dietTodayMealsDate",
+    "dietTodayMealsDirtyDate",
+    "dietDirtyMealDates",
+    "dietDailyMeals",
+    "dietDailySummaries",
+    "dietLastSyncPayload",
+    "dietProfile",
+    "dietDayType",
+    "dietEnergyUnit"
+  ].forEach((key) => wx.removeStorageSync(key));
 }
 
 function wechatLogin() {
@@ -70,15 +92,160 @@ function fetchDietData() {
     });
 }
 
+function calendarRecordDates(meals, summaries) {
+  return [...new Set([
+    ...Object.keys(meals || {}).filter((key) => Array.isArray(meals[key]) && meals[key].length > 0),
+    ...Object.keys(summaries || {}).filter((key) => {
+      const summary = summaries[key];
+      return summary && (Number(summary.kcal) > 0 || Number(summary.mealCount) > 0);
+    })
+  ])];
+}
+
+function calendarRecordMatches(key, localMeals, localSummaries, cloudMeals, cloudSummaries) {
+  const local = localSummaries[key];
+  const remote = cloudSummaries[key];
+  if (!local || !remote) return false;
+  for (const field of ["kcal", "carbs", "protein", "fat", "mealCount"]) {
+    if (Math.abs(Number(local[field] || 0) - Number(remote[field] || 0)) > 0.01) return false;
+  }
+  const meals = localMeals[key];
+  if (Array.isArray(meals) && meals.length > 0) {
+    return JSON.stringify(meals) === JSON.stringify(cloudMeals[key]);
+  }
+  return true;
+}
+
+function refreshCalendarHistory(onRead) {
+  if (calendarRefreshPromise) return calendarRefreshPromise;
+  const user = getStoredUser();
+  if (!user || !user.openid) {
+    return Promise.resolve({ localOnly: true, message: "登录后可跨设备同步日历" });
+  }
+  calendarRefreshPromise = fetchDietData().then((cloudData) => {
+    if (cloudData.localOnly) return cloudData;
+    const currentUser = getStoredUser();
+    if (!currentUser) return { localOnly: true, message: "已退出登录" };
+    if (currentUser.openid !== user.openid) {
+      return { localOnly: true, message: "登录账号已变化，请重新打开日历" };
+    }
+    if (cloudData.openid !== user.openid) {
+      return { localOnly: true, message: "云端账号不一致，请重新登录" };
+    }
+
+    const today = diet.dateKey();
+    const localTodayMeals = diet.readTodayMeals();
+    const localMeals = diet.readDailyMealHistory();
+    const localSummaries = diet.readDailySummaries();
+    const dirtyDates = diet.readDirtyMealDates();
+    const cloudMeals = cloudData.dailyMeals && typeof cloudData.dailyMeals === "object" ? cloudData.dailyMeals : {};
+    const mergedMeals = { ...localMeals, ...cloudMeals };
+    dirtyDates.forEach((date) => {
+      if (Object.prototype.hasOwnProperty.call(localMeals, date)) mergedMeals[date] = localMeals[date];
+    });
+    const cloudTodayMeals = cloudData.hasTodayData && Array.isArray(cloudData.todayMeals) ? cloudData.todayMeals : null;
+    const restoreToday = cloudTodayMeals && !dirtyDates.includes(today);
+    if (!restoreToday && (Object.prototype.hasOwnProperty.call(localMeals, today) || localTodayMeals.length)) {
+      mergedMeals[today] = localTodayMeals;
+    }
+    diet.saveDailyMealHistory(mergedMeals);
+    if (restoreToday) diet.saveTodayMeals(cloudTodayMeals, { fromCloud: true });
+
+    const cloudSummaries = cloudData.dailySummaries && typeof cloudData.dailySummaries === "object" ? cloudData.dailySummaries : {};
+    const summaries = { ...localSummaries, ...cloudSummaries };
+    Object.keys(mergedMeals).forEach((key) => {
+      if (mergedMeals[key].length || !Object.prototype.hasOwnProperty.call(summaries, key)) {
+        summaries[key] = diet.buildDailySummary(mergedMeals[key]);
+      }
+    });
+    dirtyDates.forEach((date) => {
+      if (Object.prototype.hasOwnProperty.call(localMeals, date)) {
+        summaries[date] = diet.buildDailySummary(localMeals[date]);
+      }
+    });
+    if (restoreToday) summaries[today] = diet.buildDailySummary(cloudTodayMeals);
+    diet.saveDailySummaries(summaries);
+    const readCount = calendarRecordDates(cloudMeals, cloudSummaries).length;
+    const readMessage = `云端已读取 ${readCount} 天记录`;
+    if (onRead) onRead({ localOnly: false, message: readMessage });
+
+    const localDates = calendarRecordDates(mergedMeals, summaries);
+    const needsUpload = localDates.filter((key) => !calendarRecordMatches(key, mergedMeals, summaries, cloudMeals, cloudSummaries));
+    dirtyDates.forEach((date) => {
+      if (!calendarRecordMatches(date, mergedMeals, summaries, cloudMeals, cloudSummaries)
+        || JSON.stringify(mergedMeals[date]) !== JSON.stringify(cloudMeals[date])) {
+        if (!needsUpload.includes(date)) needsUpload.push(date);
+      }
+    });
+    const verify = (verifiedData) => {
+      if (verifiedData.localOnly || verifiedData.openid !== user.openid) {
+        return { localOnly: false, message: `${readMessage} · 上传未验证` };
+      }
+      const verifiedMeals = verifiedData.dailyMeals || {};
+      const verifiedSummaries = verifiedData.dailySummaries || {};
+      const uploadedCount = localDates.filter((key) =>
+        calendarRecordMatches(key, mergedMeals, summaries, verifiedMeals, verifiedSummaries)).length;
+      const verifiedDirtyDates = dirtyDates.filter((date) =>
+        calendarRecordMatches(date, mergedMeals, summaries, verifiedMeals, verifiedSummaries)
+        && JSON.stringify(mergedMeals[date]) === JSON.stringify(verifiedMeals[date]));
+      diet.clearDirtyMealDates(verifiedDirtyDates.filter((date) =>
+        JSON.stringify(diet.readDailyMealHistory()[date]) === JSON.stringify(mergedMeals[date])));
+      const allVerified = uploadedCount === localDates.length && verifiedDirtyDates.length === dirtyDates.length;
+      return {
+        localOnly: false,
+        verified: allVerified,
+        message: allVerified
+          ? `${readMessage} · 已上传 ${uploadedCount} 天记录`
+          : `${readMessage} · 已核对 ${uploadedCount}/${localDates.length} 天，上传待确认`
+      };
+    };
+    if (!needsUpload.length) return verify(cloudData);
+
+    const uploadMeals = {};
+    const uploadSummaries = {};
+    needsUpload.forEach((key) => {
+      if (Array.isArray(mergedMeals[key])) uploadMeals[key] = mergedMeals[key];
+      if (summaries[key]) uploadSummaries[key] = summaries[key];
+    });
+    const uploadToday = needsUpload.includes(today) && (dirtyDates.includes(today) || !cloudTodayMeals);
+    return callCloudFunction("syncDietData", {
+      syncScope: "calendar",
+      dailyMeals: uploadMeals,
+      dailySummaries: uploadSummaries,
+      overwriteDates: dirtyDates.filter((date) => needsUpload.includes(date)),
+      todayDate: uploadToday ? today : "",
+      todayMeals: uploadToday ? diet.readTodayMeals() : []
+    }).then((response) => {
+      const result = response && response.result;
+      if (!result || result.ok !== true || result.openid !== user.openid) {
+        throw new Error("云端未确认写入");
+      }
+      return fetchDietData().then(verify);
+    }).catch(() => ({ localOnly: false, message: `${readMessage} · 上传未验证` }));
+  }).catch((error) => ({
+    localOnly: true,
+    message: error && error.message ? `云端读取失败：${error.message}` : "云端读取失败，显示本机记录"
+  })).finally(() => {
+    calendarRefreshPromise = null;
+  });
+  return calendarRefreshPromise;
+}
+
 function buildDietPayload(payload = {}) {
+  const dailyMeals = payload.dailyMeals && typeof payload.dailyMeals === "object" ? payload.dailyMeals : diet.readDailyMealHistory();
   return {
     openid: payload.openid || "",
     profile: payload.profile || diet.readProfile(),
     foods: Array.isArray(payload.foods) ? payload.foods : diet.readFoodCatalog(),
     todayMeals: Array.isArray(payload.todayMeals) ? payload.todayMeals : diet.readTodayMeals(),
-    dailyMeals: payload.dailyMeals && typeof payload.dailyMeals === "object" ? payload.dailyMeals : diet.readDailyMealHistory(),
-    dailySummaries: payload.dailySummaries && typeof payload.dailySummaries === "object" ? payload.dailySummaries : diet.buildDailySummaries(),
+    dailyMeals,
+    dailySummaries: {
+      ...diet.readDailySummaries(),
+      ...(payload.dailySummaries && typeof payload.dailySummaries === "object" ? payload.dailySummaries : {}),
+      ...diet.buildDailySummaries(dailyMeals)
+    },
     todayDate: diet.dateKey(),
+    overwriteDates: diet.readDirtyMealDates(),
     foodMutation: payload.foodMutation || null,
     foodMutations: Array.isArray(payload.foodMutations) ? payload.foodMutations : [],
     syncScope: payload.syncScope || "all",
@@ -101,6 +268,10 @@ function loginWithWechat(payload = {}) {
         };
         saveStoredUser(user);
         return fetchDietData().then((cloudData) => {
+          if (cloudData.localOnly) {
+            clearStoredUser();
+            throw new Error(cloudData.message || "云端数据读取失败，请稍后重试");
+          }
           const hasCloudProfile = cloudData && (cloudData.hasProfileData || (cloudData.profile && Object.keys(cloudData.profile).length > 0));
           const hasCloudFoods = cloudData && (cloudData.hasFoodData || (Array.isArray(cloudData.foods) && cloudData.foods.length > 0));
           const hasCloudMeals = cloudData && (cloudData.hasMealData || (
@@ -126,13 +297,23 @@ function syncDietData(payload = {}) {
     ...payload,
     openid: user && user.openid ? user.openid : ""
   });
-  wx.setStorageSync("dietLastSyncPayload", data);
   const foodOnly = data.syncScope === "foods";
   if (!user && !foodOnly) {
     return Promise.resolve({ localOnly: true, message: "未登录，已保存在本机" });
   }
+  if (!foodOnly) wx.setStorageSync("dietLastSyncPayload", data);
   return callCloudFunction("syncDietData", data)
     .then((result) => {
+      const detail = result && result.result;
+      if (!detail || detail.ok !== true || (user && user.openid && detail.openid !== user.openid)) {
+        throw new Error("云端未确认写入");
+      }
+      if (!foodOnly) {
+        const currentHistory = diet.readDailyMealHistory();
+        const confirmedDates = data.overwriteDates.filter((date) =>
+          JSON.stringify(currentHistory[date]) === JSON.stringify(data.dailyMeals[date]));
+        diet.clearDirtyMealDates(confirmedDates);
+      }
       if (foodOnly) {
         const sentMutations = [
           ...(Array.isArray(data.foodMutations) ? data.foodMutations : []),
@@ -157,7 +338,7 @@ function syncDietData(payload = {}) {
       return {
         localOnly: false,
         message: "已同步到后台",
-        detail: result && result.result ? result.result : {}
+        detail
       };
     })
     .catch((error) => ({
@@ -196,6 +377,8 @@ module.exports = {
   fetchDietData,
   getStoredUser,
   loginWithWechat,
+  logoutAndClearLocalHistory,
   queueSyncDietData,
+  refreshCalendarHistory,
   syncDietData
 };

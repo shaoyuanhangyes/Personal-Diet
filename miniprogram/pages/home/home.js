@@ -1,4 +1,5 @@
 const diet = require("../../utils/diet");
+const cloudSync = require("../../utils/cloud-sync");
 
 const RING_GRADIENTS = {
   total: ["#ffd1e8", "#ff86c8", "#ff4f9a", "#d80b2f"],
@@ -68,7 +69,8 @@ Page({
     weekdays: ["一", "二", "三", "四", "五", "六", "日"],
     calendarMonthLabel: "",
     calendarDays: [],
-    calendarSummary: {}
+    calendarSummary: {},
+    calendarSyncText: "按日期排序"
   },
 
   onReady() {
@@ -128,8 +130,25 @@ Page({
     const carbsPercent = diet.clampPercent(intake.carbs, macroTargets.carbs);
     const proteinPercent = diet.clampPercent(intake.protein, macroTargets.protein);
     const fatPercent = diet.clampPercent(intake.fat, macroTargets.fat);
-    const homeMeals = meals.slice(0, 3).map((meal) => {
+    const mergedHomeMeals = [];
+    const homeMealIndexes = Object.create(null);
+    meals.forEach((meal) => {
       const food = diet.mealFood(meal);
+      const signature = diet.foodSignature(food);
+      const existingIndex = homeMealIndexes[signature];
+      if (existingIndex !== undefined) {
+        const existing = mergedHomeMeals[existingIndex];
+        existing.food.quantity += Number(food.quantity || 0);
+        return;
+      }
+      homeMealIndexes[signature] = mergedHomeMeals.length;
+      mergedHomeMeals.push({
+        id: meal.id,
+        food: { ...food }
+      });
+    });
+    const homeMeals = mergedHomeMeals.map((meal) => {
+      const food = meal.food;
       const macros = diet.foodMacros(food);
       return {
         id: meal.id,
@@ -139,8 +158,6 @@ Page({
         carbs: diet.formatDecimal(macros.carbs),
         protein: diet.formatDecimal(macros.protein),
         fat: diet.formatDecimal(macros.fat),
-        consumedAtText: diet.formatDateTime(meal.consumedAt),
-        hasConsumedAt: !!meal.consumedAt,
         energy: diet.formatEnergy(diet.foodEnergy(food), unit)
       };
     });
@@ -179,7 +196,7 @@ Page({
     return {
       key,
       name,
-      amount: `${diet.round(current)} / ${diet.round(target)} g`,
+      amount: `${diet.formatDecimal(current)} / ${diet.formatDecimal(target)} g`,
       percent,
       percentText: `${diet.round(percent)}%`,
       iconClass: `macro-icon ${key}`,
@@ -305,8 +322,23 @@ Page({
     const now = new Date();
     this.calendarMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     this.selectedCalendarDate = diet.dateKey();
-    this.setData({ calendarVisible: true, calendarOpenClass: "is-calendar-open" });
+    this.setData({
+      calendarVisible: true,
+      calendarOpenClass: "is-calendar-open",
+      calendarSyncText: cloudSync.getStoredUser() ? "正在读取云端记录" : "登录后可跨设备同步"
+    });
     this.renderCalendar();
+    if (!cloudSync.getStoredUser()) return;
+    return cloudSync.refreshCalendarHistory((result) => {
+      if (this.data.calendarVisible) {
+        this.setData({ calendarSyncText: result.message });
+        this.renderPage();
+      }
+    }).then((result) => {
+      if (!this.data.calendarVisible) return;
+      this.setData({ calendarSyncText: result.message });
+      if (!result.localOnly) this.renderPage();
+    });
   },
 
   closeCalendar() {
@@ -341,13 +373,22 @@ Page({
 
   dailySummary(key) {
     const meals = this.mealsForDate(key);
+    const savedSummary = diet.readDailySummaries()[key];
     const profile = diet.readProfile();
     const targets = diet.calculateTargets(profile);
     const targetCalories = this.data.dayType === "training" ? targets.f1 : targets.f2;
     const macroTargets = diet.macroTargets(targetCalories, profile, this.data.dayType);
-    const intake = diet.totalIntake(meals);
+    const intake = meals.length ? diet.totalIntake(meals) : {
+      kcal: Number(savedSummary && savedSummary.kcal) || 0,
+      carbs: Number(savedSummary && savedSummary.carbs) || 0,
+      protein: Number(savedSummary && savedSummary.protein) || 0,
+      fat: Number(savedSummary && savedSummary.fat) || 0
+    };
+    const mealCount = meals.length || Number(savedSummary && savedSummary.mealCount) || 0;
     return {
       meals,
+      mealCount,
+      hasData: mealCount > 0 || intake.kcal > 0,
       intake,
       totalPercent: diet.clampPercent(intake.kcal, targetCalories),
       carbsPercent: diet.clampPercent(intake.carbs, macroTargets.carbs),
@@ -372,15 +413,15 @@ Page({
         outside: current.getMonth() !== month.getMonth(),
         today: key === today,
         selected: key === this.selectedCalendarDate,
-        hasData: summary.meals.length > 0,
+        hasData: summary.hasData,
         className: [
           "calendar-day",
           current.getMonth() !== month.getMonth() ? "is-outside" : "",
           key === today ? "is-today" : "",
           key === this.selectedCalendarDate ? "is-selected" : "",
-          summary.meals.length > 0 ? "has-data" : ""
+          summary.hasData ? "has-data" : ""
         ].filter(Boolean).join(" "),
-        energy: summary.meals.length ? diet.round(diet.energyValue(summary.intake.kcal, unit)) : "0",
+        energy: summary.hasData ? diet.round(diet.energyValue(summary.intake.kcal, unit)) : "0",
         ring: makeRing(summary.totalPercent, summary.carbsPercent, summary.proteinPercent, summary.fatPercent, true)
       };
     });
@@ -393,7 +434,7 @@ Page({
         date: `${selectedDate.getMonth() + 1}月${selectedDate.getDate()}日`,
         energy: diet.formatEnergy(selectedSummary.intake.kcal, unit),
         percent: `${diet.round(selectedSummary.totalPercent)}%`,
-        count: `${selectedSummary.meals.length}项`,
+        count: `${selectedSummary.mealCount}项`,
         carbs: `${diet.round(selectedSummary.intake.carbs)}g`,
         protein: `${diet.round(selectedSummary.intake.protein)}g`,
         fat: `${diet.round(selectedSummary.intake.fat)}g`

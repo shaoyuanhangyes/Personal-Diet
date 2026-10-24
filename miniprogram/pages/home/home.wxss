@@ -494,15 +494,9 @@
 }
 
 .meal-serving,
-.meal-desc,
-.meal-time {
+.meal-desc {
   color: #697386;
   font-size: 22rpx;
-}
-
-.meal-time {
-  margin-top: 6rpx;
-  color: #8791a3;
 }
 
 .meal-serving {

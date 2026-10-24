@@ -1,4 +1,4 @@
-<view class="page food-page">
+<view class="page food-page" bindtap="closeEditOnOutside">
   <view class="app-header">
     <view class="title-block">
       <view class="title">饮食清单</view>
@@ -23,7 +23,7 @@
     <view wx:if="{{noFoods}}" class="empty-state">没有找到食物</view>
     <block wx:if="{{hasFoods}}">
       <block wx:for="{{foods}}" wx:key="id">
-        <view class="{{item.rowClass}}" data-id="{{item.id}}" bindtap="selectFood">
+        <view class="{{item.rowClass}}" data-id="{{item.id}}" catchtap="selectFood">
           <view class="food-main">
             <view class="food-avatar" wx:if="{{item.noImage}}">{{item.initial}}</view>
             <image wx:if="{{item.hasImage}}" class="food-avatar image" mode="aspectFill" src="{{item.image}}"></image>
@@ -37,16 +37,18 @@
                 <text>蛋白质 {{item.proteinText}}g</text>
                 <text>脂肪 {{item.fatText}}g</text>
                 <text>规格 {{item.spec}}</text>
-                <text>默认 {{item.quantity}}{{item.unit}}</text>
+                <text>{{item.quantityText}}</text>
               </view>
-              <view class="food-edit-grid" wx:if="{{item.editing}}">
+              <view class="food-edit-grid" wx:if="{{item.editing}}" catchtap="stopEditTap">
                 <input data-id="{{item.id}}" data-field="name" value="{{item.name}}" bindinput="editFood" />
                 <input data-id="{{item.id}}" data-field="carbs" type="digit" value="{{item.carbsValue}}" bindinput="editFood" />
                 <input data-id="{{item.id}}" data-field="protein" type="digit" value="{{item.proteinValue}}" bindinput="editFood" />
                 <input data-id="{{item.id}}" data-field="fat" type="digit" value="{{item.fatValue}}" bindinput="editFood" />
+                <input data-id="{{item.id}}" data-field="energy" type="digit" placeholder="能量 {{unit}}（可选）" value="{{item.energyValue}}" bindinput="editFood" />
                 <input data-id="{{item.id}}" data-field="coefficient" type="digit" value="{{item.coefficientValue}}" bindinput="editFood" />
                 <input data-id="{{item.id}}" data-field="quantity" type="digit" value="{{item.quantityValue}}" bindinput="editFood" />
-                <input data-id="{{item.id}}" data-field="unit" value="{{item.unitValue}}" bindinput="editFood" />
+                <input wx:if="{{!item.hasNutritionBasis}}" data-id="{{item.id}}" data-field="unit" value="{{item.unitValue}}" bindinput="editFood" />
+                <text wx:if="{{item.hasNutritionBasis}}">营养值按{{item.unit === '个' ? '每包装' : '每100' + item.measureUnit}}编辑，单位由规格自动确定</text>
               </view>
             </view>
           </view>
@@ -77,26 +79,59 @@
     </view>
   </view>
 
-  <view wx:if="{{addVisible}}" class="add-sheet">
-    <button class="sheet-backdrop" bindtap="closeAddSheet"></button>
-    <view class="sheet-panel">
+  <view wx:if="{{addVisible}}" class="add-sheet" bindtap="closeAddSheet">
+    <view class="sheet-backdrop"></view>
+    <view class="sheet-panel" catchtap="stopSheetTap">
       <view class="sheet-grip"></view>
       <view class="sheet-head">
         <view class="card-title">添加食物</view>
         <view class="icon-button small close-sheet-button" bindtap="closeAddSheet" role="button" aria-label="关闭添加食物">×</view>
       </view>
-      <view class="image-uploader" bindtap="chooseImage">
-        <image wx:if="{{newFoodHasImage}}" mode="aspectFill" src="{{newFood.image}}"></image>
-        <view wx:if="{{newFoodNoImage}}">上传图片</view>
+      <view class="nutrition-scan">
+        <view class="nutrition-scan-title">拍照识别营养成分表</view>
+        <view class="nutrition-scan-actions">
+          <button class="nutrition-scan-button" data-source="camera" bindtap="chooseNutritionPhoto" loading="{{ocrLoading}}" disabled="{{ocrLoading}}">打开摄像头</button>
+          <button class="nutrition-scan-button" data-source="album" bindtap="chooseNutritionPhoto" disabled="{{ocrLoading}}">上传照片</button>
+        </view>
+        <view class="nutrition-scan-hint">识别结果会按成分表标注的每100g、每100ml或每份填入表单，请核对后填写食物名称和最小包装规格。</view>
       </view>
       <view class="sheet-form">
-        <input placeholder="食物名称" data-field="name" value="{{newFood.name}}" bindinput="inputNewFood" />
-        <input placeholder="碳水：g单位填每100g，个单位填每个" type="digit" data-field="carbs" value="{{newFood.carbs}}" bindinput="inputNewFood" />
-        <input placeholder="蛋白质：g单位填每100g，个单位填每个" type="digit" data-field="protein" value="{{newFood.protein}}" bindinput="inputNewFood" />
-        <input placeholder="脂肪：g单位填每100g，个单位填每个" type="digit" data-field="fat" value="{{newFood.fat}}" bindinput="inputNewFood" />
-        <input placeholder="规格重量：每份或每个的克数" type="digit" data-field="coefficient" value="{{newFood.coefficient}}" bindinput="inputNewFood" />
-        <input placeholder="默认数量：g单位建议100，个单位建议1" type="digit" data-field="quantity" value="{{newFood.quantity}}" bindinput="inputNewFood" />
-        <input placeholder="单位，例如 g / 个" data-field="unit" value="{{newFood.unit}}" bindinput="inputNewFood" />
+        <view class="sheet-field">
+          <text class="sheet-field-label">食物名称</text>
+          <input class="sheet-field-input" placeholder="请输入" aria-label="食物名称" data-field="name" value="{{newFood.name}}" adjust-position="{{false}}" bindinput="inputNewFood" />
+        </view>
+        <view class="sheet-field">
+          <text class="sheet-field-label">碳水化合物</text>
+          <input class="sheet-field-input" placeholder="请输入" type="digit" aria-label="碳水化合物" data-field="carbs" value="{{newFood.carbs}}" adjust-position="{{false}}" bindinput="inputNewFood" />
+          <text class="sheet-field-unit">g/{{newFood.quantity || 100}}{{newFood.measureUnit}}</text>
+        </view>
+        <view class="sheet-field">
+          <text class="sheet-field-label">蛋白质</text>
+          <input class="sheet-field-input" placeholder="请输入" type="digit" aria-label="蛋白质" data-field="protein" value="{{newFood.protein}}" adjust-position="{{false}}" bindinput="inputNewFood" />
+          <text class="sheet-field-unit">g/{{newFood.quantity || 100}}{{newFood.measureUnit}}</text>
+        </view>
+        <view class="sheet-field">
+          <text class="sheet-field-label">脂肪</text>
+          <input class="sheet-field-input" placeholder="请输入" type="digit" aria-label="脂肪" data-field="fat" value="{{newFood.fat}}" adjust-position="{{false}}" bindinput="inputNewFood" />
+          <text class="sheet-field-unit">g/{{newFood.quantity || 100}}{{newFood.measureUnit}}</text>
+        </view>
+        <view class="sheet-field">
+          <text class="sheet-field-label">能量</text>
+          <input class="sheet-field-input" placeholder="可选" type="digit" aria-label="能量" data-field="energy" value="{{newFood.energy}}" adjust-position="{{false}}" bindinput="inputNewFood" />
+          <text class="sheet-field-unit">{{unit}}/{{newFood.quantity || 100}}{{newFood.measureUnit}}</text>
+        </view>
+        <view wx:if="{{ocrReview}}" class="nutrition-review">请核对识别结果，特别是规格和能量单位；食物名称需要手动填写。</view>
+        <view class="sheet-field">
+          <text class="sheet-field-label">最小包装{{newFood.measureUnit === 'ml' ? '容量' : '重量'}}</text>
+          <input class="sheet-field-input" placeholder="无包装填 1" type="digit" aria-label="最小包装{{newFood.measureUnit === 'ml' ? '容量' : '重量'}}" data-field="coefficient" value="{{newFood.coefficient}}" adjust-position="{{false}}" bindinput="inputNewFood" />
+          <text class="sheet-field-unit">{{newFood.measureUnit}}</text>
+        </view>
+        <view class="sheet-field">
+          <text class="sheet-field-label">营养标示基准</text>
+          <input class="sheet-field-input" placeholder="例如 100" type="digit" aria-label="营养标示基准" data-field="quantity" value="{{newFood.quantity}}" adjust-position="{{false}}" bindinput="inputNewFood" />
+          <text class="sheet-field-unit">{{newFood.measureUnit}}</text>
+        </view>
+        <view class="nutrition-scan-hint">最小包装填 1{{newFood.measureUnit}} 时，餐食按{{newFood.measureUnit === 'ml' ? '毫升' : '克'}}计算；大于 1{{newFood.measureUnit}} 时，按最小包装数量计算。营养标示基准填成分表注明的“每多少{{newFood.measureUnit === 'ml' ? '毫升' : '克'}}”。</view>
         <button class="primary-button" bindtap="addFood">保存食物</button>
         <view class="status-text">{{status}}</view>
       </view>

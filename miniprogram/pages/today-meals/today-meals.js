@@ -1,16 +1,40 @@
 const diet = require("../../utils/diet");
 const cloudSync = require("../../utils/cloud-sync");
 const MEAL_PAGE_SIZE = 5;
+const FOOD_TILES_PER_ROW = 4;
+const foodPickerAnchor = (index) => `food-tile-${Math.max(0, Math.floor(index / FOOD_TILES_PER_ROW) - 1) * FOOD_TILES_PER_ROW}`;
+const quantityUnitLabel = (food) => {
+  if (!food) return "克数";
+  if (food.packageGrams > 1 || (!diet.isCountUnit(food.unit) && food.coefficient > 1)) return "包装数";
+  if (food.packageMl > 1) return "包装数";
+  if (food.unit === "ml") return "毫升数";
+  return diet.isCountUnit(food.unit) ? "个数" : "克数";
+};
+const foodTiles = (foods) => foods.map((food, index) => {
+  const unitLabel = quantityUnitLabel(food);
+  return {
+    index,
+    name: food.name,
+    initial: String(food.name || "?").slice(0, 1),
+    unitLabel,
+    colorGroup: unitLabel === "包装数" ? "package" : unitLabel === "个数" ? "count" : "measure"
+  };
+});
 
 Page({
   data: {
     foods: [],
-    foodNames: [],
+    foodTiles: [],
+    foodPickerOpen: false,
+    foodPickerAnchorId: "",
+    pendingFoodIndex: -1,
+    pendingFoodLabel: "",
     selectedIndex: 0,
     selectedFoodLabel: "请选择食物",
+    quantityUnitLabel: "克数",
     quantity: "",
     servingPreview: "",
-    summary: { kcal: "0 kcal", carbs: "0 g", protein: "0 g", fat: "0 g" },
+    summary: { kcal: "0 kcal", carbs: "0.0 g", protein: "0.0 g", fat: "0.0 g" },
     meals: [],
     hasMeals: false,
     noMeals: true,
@@ -27,6 +51,10 @@ Page({
 
   onShow() {
     this.loadData();
+  },
+
+  onHide() {
+    this.finishFoodPicker();
   },
 
   onUnload() {
@@ -47,9 +75,14 @@ Page({
     const selectedFood = foods[selectedIndex];
     this.setData({
       foods,
-      foodNames: foods.map((food) => food.name),
+      foodTiles: foodTiles(foods),
+      foodPickerOpen: false,
+      foodPickerAnchorId: "",
+      pendingFoodIndex: -1,
+      pendingFoodLabel: "",
       selectedIndex,
-      selectedFoodLabel: selectedFood ? selectedFood.name : "暂无食物，请先去饮食清单添加"
+      selectedFoodLabel: selectedFood ? selectedFood.name : "暂无食物，请先去饮食清单添加",
+      quantityUnitLabel: quantityUnitLabel(selectedFood)
     });
     this.renderMealList(diet.readTodayMeals());
     this.renderSummary();
@@ -65,19 +98,71 @@ Page({
     const selectedIndex = Math.max(0, foods.findIndex((food) => diet.foodSignature(food) === selectedSignature));
     this.setData({
       foods,
-      foodNames: foods.map((food) => food.name),
+      foodTiles: foodTiles(foods),
+      foodPickerOpen: false,
+      foodPickerAnchorId: "",
+      pendingFoodIndex: -1,
+      pendingFoodLabel: "",
       selectedIndex,
-      selectedFoodLabel: foods[selectedIndex] ? foods[selectedIndex].name : "暂无食物，请先去饮食清单添加"
+      selectedFoodLabel: foods[selectedIndex] ? foods[selectedIndex].name : "暂无食物，请先去饮食清单添加",
+      quantityUnitLabel: quantityUnitLabel(foods[selectedIndex])
     });
   },
 
-  changeFood(event) {
-    const selectedIndex = Number(event.detail.value || 0);
+  toggleFoodPicker() {
+    if (this.data.foodPickerOpen) {
+      this.finishFoodPicker();
+      return;
+    }
+    this.setData({
+      foodPickerOpen: true,
+      foodPickerAnchorId: foodPickerAnchor(this.data.selectedIndex),
+      pendingFoodIndex: -1,
+      pendingFoodLabel: ""
+    });
+  },
+
+  selectFoodTile(event) {
+    const pendingFoodIndex = Number(event.currentTarget.dataset.index);
+    if (!this.data.foodPickerOpen || !Number.isInteger(pendingFoodIndex) || pendingFoodIndex < 0 || pendingFoodIndex >= this.data.foods.length) return;
+    if (pendingFoodIndex === this.data.pendingFoodIndex) {
+      this.confirmFoodTile();
+      return;
+    }
+    this.setData({
+      pendingFoodIndex,
+      pendingFoodLabel: this.data.foods[pendingFoodIndex].name,
+      status: ""
+    });
+  },
+
+  finishFoodPicker() {
+    if (!this.data.foodPickerOpen) return;
+    if (this.data.pendingFoodIndex >= 0) {
+      this.confirmFoodTile();
+      return;
+    }
+    this.setData({ foodPickerOpen: false, foodPickerAnchorId: "" });
+  },
+
+  handleOutsideTap() {
+    this.finishFoodPicker();
+  },
+
+  confirmFoodTile() {
+    const selectedIndex = this.data.pendingFoodIndex;
+    if (!this.data.foodPickerOpen || !Number.isInteger(selectedIndex) || selectedIndex < 0 || selectedIndex >= this.data.foods.length) return;
     const selectedFood = this.data.foods[selectedIndex];
+    const changed = selectedIndex !== this.data.selectedIndex;
     this.setData({
       selectedIndex,
-      selectedFoodLabel: selectedFood ? selectedFood.name : "请选择食物",
-      quantity: "",
+      selectedFoodLabel: selectedFood.name,
+      quantityUnitLabel: quantityUnitLabel(selectedFood),
+      foodPickerOpen: false,
+      foodPickerAnchorId: "",
+      pendingFoodIndex: -1,
+      pendingFoodLabel: "",
+      quantity: changed ? "" : this.data.quantity,
       status: ""
     });
     this.renderServingPreview();
@@ -105,9 +190,9 @@ Page({
     this.setData({
       summary: {
         kcal: diet.formatEnergy(intake.kcal),
-        carbs: `${diet.round(intake.carbs)} g`,
-        protein: `${diet.round(intake.protein)} g`,
-        fat: `${diet.round(intake.fat)} g`
+        carbs: `${diet.formatDecimal(intake.carbs)} g`,
+        protein: `${diet.formatDecimal(intake.protein)} g`,
+        fat: `${diet.formatDecimal(intake.fat)} g`
       }
     });
   },
@@ -152,11 +237,19 @@ Page({
   },
 
   prevPage() {
+    if (this.data.foodPickerOpen) {
+      this.finishFoodPicker();
+      return;
+    }
     if (this.data.currentPage <= 1) return;
     this.renderMealList(diet.readTodayMeals(), "", this.data.currentPage - 1);
   },
 
   nextPage() {
+    if (this.data.foodPickerOpen) {
+      this.finishFoodPicker();
+      return;
+    }
     if (this.data.currentPage >= this.data.totalPages) return;
     this.renderMealList(diet.readTodayMeals(), "", this.data.currentPage + 1);
   },
@@ -208,13 +301,17 @@ Page({
   },
 
   addMeal() {
+    if (this.data.foodPickerOpen) {
+      this.finishFoodPicker();
+      return;
+    }
     const food = this.data.foods[this.data.selectedIndex];
     const quantity = Number(this.data.quantity || 0);
     if (!food) {
       this.setData({ status: "请先在饮食清单添加食物" });
       return;
     }
-    if (quantity <= 0) {
+    if (!Number.isFinite(quantity) || quantity <= 0) {
       this.setData({ status: "数量需要大于 0" });
       return;
     }
@@ -241,6 +338,10 @@ Page({
   },
 
   deleteMeal(event) {
+    if (this.data.foodPickerOpen) {
+      this.finishFoodPicker();
+      return;
+    }
     const id = event.currentTarget.dataset.id;
     const meals = diet.readTodayMeals().filter((meal) => meal.id !== id);
     diet.saveTodayMeals(meals);
@@ -252,6 +353,10 @@ Page({
   },
 
   clearMeals() {
+    if (this.data.foodPickerOpen) {
+      this.finishFoodPicker();
+      return;
+    }
     diet.saveTodayMeals([]);
     this.notifyHomeRefresh();
     this.syncMeals();

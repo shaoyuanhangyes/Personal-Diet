@@ -1,0 +1,9 @@
+{
+  "name": "recognizeNutrition",
+  "version": "1.0.0",
+  "main": "index.js",
+  "dependencies": {
+    "tencentcloud-sdk-nodejs-ocr": "4.1.329",
+    "wx-server-sdk": "3.0.4"
+  }
+}

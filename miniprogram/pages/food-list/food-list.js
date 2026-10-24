@@ -1,16 +1,17 @@
 const diet = require("../../utils/diet");
 const cloudSync = require("../../utils/cloud-sync");
 const PAGE_SIZE = 5;
+const energyInputValue = (kcal, unit) => Number(diet.energyValue(kcal, unit).toFixed(4));
 
 const emptyFood = () => ({
   name: "",
   carbs: "",
   protein: "",
   fat: "",
+  energy: "",
   coefficient: "",
   quantity: "",
-  unit: "",
-  image: ""
+  measureUnit: "g"
 });
 
 Page({
@@ -31,10 +32,9 @@ Page({
     nextDisabled: true,
     kcalActive: "active",
     kjActive: "",
-    newFoodHasImage: false,
-    newFoodNoImage: true,
-    imageUploading: false,
     newFood: emptyFood(),
+    ocrLoading: false,
+    ocrReview: false,
     status: ""
   },
 
@@ -110,6 +110,9 @@ Page({
   },
 
   formatFood(food) {
+    const measureUnit = diet.foodMeasureUnit(food);
+    const packageSize = diet.foodPackageSize(food);
+    const nutritionBasis = diet.foodNutritionBasis(food);
     return {
       id: food.id,
       name: food.name,
@@ -123,13 +126,17 @@ Page({
       carbsText: Number(food.carbs).toFixed(1),
       proteinText: Number(food.protein).toFixed(1),
       fatText: Number(food.fat).toFixed(1),
+      energyValue: food.energy == null ? "" : energyInputValue(food.energy, this.data.unit),
       carbsValue: food.carbs,
       proteinValue: food.protein,
       fatValue: food.fat,
-      coefficientValue: food.coefficient,
-      quantityValue: food.quantity,
+      coefficientValue: packageSize || food.coefficient,
+      quantityValue: nutritionBasis || food.quantity,
       unitValue: food.unit,
-      spec: diet.formatUnitGrams(food),
+      spec: packageSize ? `${packageSize}${measureUnit}` : food.servingSize ? `每份${food.servingSize}${measureUnit}` : diet.formatUnitGrams(food),
+      quantityText: nutritionBasis ? `营养标示 每${nutritionBasis}${measureUnit}` : `默认 ${food.quantity}${food.unit}`,
+      hasNutritionBasis: !!nutritionBasis,
+      measureUnit,
       energy: `${diet.foodReferenceEnergyLabel(food)} ${diet.formatEnergy(diet.foodEnergyPer100g(food), this.data.unit)}`,
       editing: food.id === this.data.selectedFoodId,
       readonly: food.id !== this.data.selectedFoodId,
@@ -159,9 +166,7 @@ Page({
       prevDisabled: currentPage <= 1,
       nextDisabled: currentPage >= totalPages,
       kcalActive: this.data.unit === "kcal" ? "active" : "",
-      kjActive: this.data.unit === "kJ" ? "active" : "",
-      newFoodHasImage: !!this.data.newFood.image,
-      newFoodNoImage: !this.data.newFood.image
+      kjActive: this.data.unit === "kJ" ? "active" : ""
     });
   },
 
@@ -194,8 +199,16 @@ Page({
 
   changeUnit(event) {
     const unit = event.currentTarget.dataset.unit;
+    if (unit === this.data.unit) return;
+    const currentEnergy = this.data.newFood.energy;
+    if (currentEnergy !== "" && currentEnergy !== null && currentEnergy !== undefined && !Number.isFinite(Number(currentEnergy))) {
+      this.setData({ status: "请先填写完整的能量数值再切换单位" });
+      return;
+    }
+    const newFoodEnergy = currentEnergy === "" || currentEnergy === null || currentEnergy === undefined
+      ? currentEnergy : energyInputValue(diet.energyToKcal(currentEnergy, this.data.unit), unit);
     wx.setStorageSync("dietEnergyUnit", unit);
-    this.setData({ unit });
+    this.setData({ unit, "newFood.energy": newFoodEnergy });
     this.renderFoods();
     cloudSync.queueSyncDietData({
       profile: diet.readProfile(),
@@ -205,7 +218,13 @@ Page({
 
   selectFood(event) {
     const id = event.currentTarget.dataset.id;
-    this.setData({ selectedFoodId: id });
+    this.setData({ selectedFoodId: this.data.selectedFoodId === id ? "" : id });
+    this.renderFoods();
+  },
+
+  closeEditOnOutside() {
+    if (!this.data.selectedFoodId) return;
+    this.setData({ selectedFoodId: "" });
     this.renderFoods();
   },
 
@@ -215,15 +234,59 @@ Page({
     this.renderFoods();
   },
 
+  stopEditTap() {},
+
   editFood(event) {
     const id = event.currentTarget.dataset.id;
     const field = event.currentTarget.dataset.field;
     const value = event.detail.value;
+    if (field === "energy" && value !== "" && (!Number.isFinite(Number(value)) || Number(value) < 0)) {
+      this.setData({ status: "能量需为非负数字" });
+      return;
+    }
     const numericFields = ["carbs", "protein", "fat", "coefficient", "quantity"];
+    if (numericFields.includes(field) && value !== "" && !Number.isFinite(Number(value))) {
+      this.setData({ status: "请输入有效数字" });
+      return;
+    }
+    if (field === "coefficient" && this.foodsStore.some((food) => food.id === id && diet.foodNutritionBasis(food))) {
+      const grams = Number(value);
+      if (!Number.isFinite(grams) || grams < 1) {
+        this.setData({ status: "最小包装规格需至少为 1" });
+        return;
+      }
+    }
+    if (field === "quantity" && this.foodsStore.some((food) => food.id === id && diet.foodNutritionBasis(food))) {
+      const grams = Number(value);
+      if (!Number.isFinite(grams) || grams <= 0) {
+        this.setData({ status: "营养标示基准需大于 0" });
+        return;
+      }
+    }
     let editedFood = null;
     const allFoods = this.foodsStore.map((food) => {
       if (food.id !== id) return food;
-      const next = { ...food, [field]: numericFields.includes(field) ? Number(value || 0) : value };
+      const measureUnit = diet.foodMeasureUnit(food);
+      let next = { ...food, [field]: field === "energy" ? (value === "" ? null : diet.energyToKcal(value, this.data.unit)) : numericFields.includes(field) ? Number(value || 0) : value };
+      if (diet.foodNutritionBasis(food) && field === "quantity") {
+        next = { ...food, [measureUnit === "ml" ? "nutritionBasisMl" : "nutritionBasisGrams"]: Number(value || 0) };
+      }
+      if (diet.foodNutritionBasis(food) && field === "coefficient") {
+        const previousBase = diet.foodPackageSize(food) > 1 ? diet.foodPackageSize(food) : 100;
+        const nextBase = Number(value) > 1 ? Number(value) : 100;
+        const factor = nextBase / previousBase;
+        next = {
+          ...food,
+          carbs: food.carbs * factor,
+          protein: food.protein * factor,
+          fat: food.fat * factor,
+          energy: food.energy === null ? null : food.energy * factor,
+          [measureUnit === "ml" ? "packageMl" : "packageGrams"]: Number(value),
+          coefficient: Number(value),
+          quantity: Number(value) > 1 ? 1 : 100,
+          unit: Number(value) > 1 ? "个" : measureUnit
+        };
+      }
       editedFood = diet.normalizeFood(next);
       return editedFood;
     });
@@ -237,7 +300,6 @@ Page({
     this.foodsStore = allFoods;
     this.setData({ status: "已更新" });
     this.syncFoodCatalog({ type: "upsert", food: editedFood });
-    this.renderFoods();
   },
 
   deleteFood(event) {
@@ -251,76 +313,88 @@ Page({
   },
 
   openAddSheet() {
-    this.imageUploadToken = "";
+    this.nutritionScanToken = "";
     this.setData({
       addVisible: true,
       newFood: emptyFood(),
-      newFoodHasImage: false,
-      newFoodNoImage: true,
-      imageUploading: false,
+      ocrLoading: false,
+      ocrReview: false,
       status: ""
     });
   },
 
   closeAddSheet() {
-    this.imageUploadToken = "";
-    this.setData({ addVisible: false, imageUploading: false });
+    this.nutritionScanToken = "";
+    this.setData({ addVisible: false });
   },
+
+  stopSheetTap() {},
 
   inputNewFood(event) {
     const field = event.currentTarget.dataset.field;
-    const newFood = { ...this.data.newFood, [field]: event.detail.value };
     this.setData({
-      newFood,
-      newFoodHasImage: !!newFood.image,
-      newFoodNoImage: !newFood.image,
+      [`newFood.${field}`]: event.detail.value,
       status: ""
     });
   },
 
-  chooseImage() {
+  chooseNutritionPhoto(event) {
+    if (this.data.ocrLoading) return;
+    const source = event.currentTarget.dataset.source;
     wx.chooseMedia({
       count: 1,
       mediaType: ["image"],
-      sourceType: ["album", "camera"],
+      sizeType: ["original"],
+      sourceType: [source],
       success: (result) => {
-        const file = result.tempFiles && result.tempFiles[0] && result.tempFiles[0].tempFilePath;
-        if (!file) return;
-        if (!wx.cloud || !wx.cloud.uploadFile) {
-          this.setData({ status: "云存储不可用，图片未添加" });
+        const photo = result.tempFiles && result.tempFiles[0];
+        if (!photo || !photo.tempFilePath) return;
+        if (photo.size > 7 * 1024 * 1024) {
+          this.setData({ status: "图片超过 7MB，请重新拍摄或选择较小的图片" });
           return;
         }
-        const extensionMatch = file.match(/\.([a-zA-Z0-9]+)(?:\?|$)/);
-        const extension = extensionMatch ? extensionMatch[1].toLowerCase() : "jpg";
-        const cloudPath = `diet-food-images/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${extension}`;
-        const uploadToken = cloudPath;
-        this.imageUploadToken = uploadToken;
-        this.setData({
-          newFood: { ...this.data.newFood, image: file },
-          newFoodHasImage: true,
-          newFoodNoImage: false,
-          imageUploading: true,
-          status: "图片上传中..."
-        });
+        if (!wx.cloud || !wx.cloud.uploadFile || !wx.cloud.callFunction) {
+          this.setData({ status: "云开发不可用，暂时无法识别营养成分表" });
+          return;
+        }
+
+        const token = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+        this.nutritionScanToken = token;
+        this.setData({ ocrLoading: true, ocrReview: false, status: "正在识别营养成分表..." });
+        const extension = (photo.tempFilePath.match(/\.(jpg|jpeg|png|bmp)(?:\?|$)/i) || [])[1] || "jpg";
+        let fileID = "";
         wx.cloud.uploadFile({
-          cloudPath,
-          filePath: file
-        }).then((uploadResult) => {
-          if (this.imageUploadToken !== uploadToken) return;
+          cloudPath: `diet-nutrition-labels/${token}.${extension.toLowerCase()}`,
+          filePath: photo.tempFilePath
+        }).then((upload) => {
+          fileID = upload.fileID;
+          return wx.cloud.callFunction({ name: "recognizeNutrition", data: { fileID } });
+        }).then((response) => {
+          if (this.nutritionScanToken !== token) return;
+          const result = response && response.result;
+          if (!result || !result.ok) {
+            if (result && result.errorCode) console.error("nutrition OCR error code:", result.errorCode);
+            throw new Error(result && result.message || "识别失败");
+          }
           this.setData({
-            newFood: { ...this.data.newFood, image: uploadResult.fileID },
-            imageUploading: false,
-            status: "图片已上传"
+            newFood: {
+              ...this.data.newFood,
+              ...result.food,
+              energy: result.labelEnergy && result.labelEnergy.unit === this.data.unit
+                ? result.labelEnergy.value : energyInputValue(result.food.energy, this.data.unit),
+              coefficient: "",
+              quantity: result.food.quantity,
+              measureUnit: result.food.measureUnit || "g"
+            },
+            ocrReview: true,
+            status: result.message || "已识别，请核对食物名称和营养数值后保存"
           });
-        }).catch(() => {
-          if (this.imageUploadToken !== uploadToken) return;
-          this.setData({
-            newFood: { ...this.data.newFood, image: "" },
-            newFoodHasImage: false,
-            newFoodNoImage: true,
-            imageUploading: false,
-            status: "图片上传失败，请重试"
-          });
+        }).catch((error) => {
+          if (this.nutritionScanToken !== token) return;
+          this.setData({ status: error && (error.message || error.errMsg) || "识别失败，请重试" });
+        }).then(() => {
+          if (fileID && wx.cloud.deleteFile) wx.cloud.deleteFile({ fileList: [fileID] }).catch(() => {});
+          if (this.nutritionScanToken === token) this.setData({ ocrLoading: false });
         });
       }
     });
@@ -328,25 +402,29 @@ Page({
 
   addFood() {
     const data = this.data.newFood;
-    if (this.data.imageUploading) {
-      this.setData({ status: "请等待图片上传完成" });
+    if (this.data.ocrLoading) {
+      this.setData({ status: "请等待识别完成" });
       return;
     }
     if (!data.name.trim()) {
       this.setData({ status: "请填写食物名称" });
       return;
     }
-    const unit = String(data.unit || "g").trim() || "g";
-    const candidate = diet.normalizeFood({
-      name: data.name.trim(),
-      carbs: Number(data.carbs || 0),
-      protein: Number(data.protein || 0),
-      fat: Number(data.fat || 0),
-      coefficient: Number(data.coefficient || 1),
-      quantity: Number(data.quantity || (diet.isCountUnit(unit) ? 1 : 100)),
-      unit,
-      image: data.image || ""
-    });
+    const numbers = [data.carbs, data.protein, data.fat, data.energy, data.coefficient, data.quantity]
+      .filter((value) => value !== "" && value !== undefined && value !== null);
+    if (numbers.some((value) => !Number.isFinite(Number(value)) || Number(value) < 0)) {
+      this.setData({ status: "营养数值、规格和数量需为非负数字" });
+      return;
+    }
+    if (data.coefficient !== "" && Number(data.coefficient) < 1) {
+      this.setData({ status: "最小包装规格需至少为 1" });
+      return;
+    }
+    if (data.quantity !== "" && Number(data.quantity) <= 0) {
+      this.setData({ status: "营养标示基准需大于 0" });
+      return;
+    }
+    const candidate = diet.normalizeLabeledFood({ ...data, name: data.name.trim(), energyUnit: this.data.unit });
     if (this.foodsStore.some((food) => food.signature === candidate.signature)) {
       this.setData({ status: "不能添加完全重复的食物数据" });
       return;
@@ -354,11 +432,10 @@ Page({
     const allFoods = [candidate, ...this.foodsStore];
     diet.saveFoodCatalog(allFoods);
     this.foodsStore = allFoods;
-    this.imageUploadToken = "";
     this.setData({
       addVisible: false,
       newFood: emptyFood(),
-      imageUploading: false,
+      ocrReview: false,
       currentPage: 1,
       status: "已添加"
     });

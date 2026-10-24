@@ -33,12 +33,9 @@ async function ensureCollection(name) {
 }
 
 async function getDocument(collection, openid) {
-  try {
-    const result = await db.collection(collection).doc(openid).get();
-    return result && result.data ? result.data : null;
-  } catch (error) {
-    return null;
-  }
+  const result = await db.collection(collection).where({ _id: openid }).limit(1).get();
+  if (!result || !Array.isArray(result.data)) throw new Error(`invalid read result from ${collection}`);
+  return result.data[0] || null;
 }
 
 function foodKey(food) {
@@ -68,7 +65,7 @@ function normalizeFood(food) {
 
 exports.main = async (event = {}) => {
   const wxContext = cloud.getWXContext();
-  const openid = wxContext.OPENID || event.openid;
+  const openid = wxContext.OPENID;
   if (!openid) {
     throw new Error("missing openid");
   }

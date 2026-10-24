@@ -4,7 +4,7 @@ cloud.init({
   env: cloud.DYNAMIC_CURRENT_ENV
 });
 
-const db = cloud.database();
+const db = cloud.database({ throwOnNotFound: false });
 
 const COLLECTIONS = {
   profile: "diet_user_profiles",
@@ -33,12 +33,9 @@ async function ensureCollection(name) {
 }
 
 async function getDocument(collection, id) {
-  try {
-    const result = await db.collection(collection).doc(id).get();
-    return result && result.data ? result.data : null;
-  } catch (error) {
-    return null;
-  }
+  const result = await db.collection(collection).where({ _id: id }).limit(1).get();
+  if (!result || !Array.isArray(result.data)) throw new Error(`invalid read result from ${collection}`);
+  return result.data[0] || null;
 }
 
 function mealSummary(meals) {
@@ -50,7 +47,10 @@ function mealSummary(meals) {
     const carbs = Number(food.carbs || 0) * scale;
     const protein = Number(food.protein || 0) * scale;
     const fat = Number(food.fat || 0) * scale;
-    summary.kcal += carbs * 4 + protein * 4 + fat * 9;
+    const labelEnergy = food.energy === undefined || food.energy === null || food.energy === ""
+      ? null : Number(food.energy);
+    summary.kcal += labelEnergy !== null && Number.isFinite(labelEnergy) && labelEnergy >= 0
+      ? labelEnergy * scale : carbs * 4 + protein * 4 + fat * 9;
     summary.carbs += carbs;
     summary.protein += protein;
     summary.fat += fat;
@@ -59,12 +59,46 @@ function mealSummary(meals) {
   }, { kcal: 0, carbs: 0, protein: 0, fat: 0, mealCount: 0 });
 }
 
-function buildDailySummaries(dailyMeals) {
-  const summaries = {};
-  Object.keys(dailyMeals || {}).forEach((key) => {
-    summaries[key] = mealSummary(dailyMeals[key]);
-  });
-  return summaries;
+async function saveDailyRecord(openid, incomingMeals, incomingSummaries, todayDate, todayMeals, overwriteDates) {
+  let uploadedDates = 0;
+  await db.runTransaction(async (transaction) => {
+    const document = transaction.collection(COLLECTIONS.dailyMeals).doc(openid);
+    const result = await document.get();
+    const existing = result && result.data ? result.data : null;
+    const mergedMeals = { ...incomingMeals, ...((existing && existing.dailyMeals) || {}) };
+    overwriteDates.forEach((date) => {
+      mergedMeals[date] = incomingMeals[date];
+    });
+    if (todayDate) mergedMeals[todayDate] = todayMeals;
+
+    const calculated = {};
+    Object.keys(mergedMeals).forEach((date) => {
+      if (Array.isArray(mergedMeals[date]) && mergedMeals[date].length) {
+        calculated[date] = mealSummary(mergedMeals[date]);
+      }
+    });
+    overwriteDates.forEach((date) => {
+      calculated[date] = mealSummary(mergedMeals[date]);
+    });
+    if (todayDate) calculated[todayDate] = mealSummary(todayMeals);
+    const dailySummaries = {
+      ...incomingSummaries,
+      ...((existing && existing.dailySummaries) || {}),
+      ...calculated
+    };
+    await document.set({
+      data: {
+        openid,
+        todayDate: todayDate || (existing && existing.todayDate) || "",
+        todayMeals: todayDate ? todayMeals : ((existing && existing.todayMeals) || []),
+        dailyMeals: mergedMeals,
+        dailySummaries,
+        updatedAt: db.serverDate()
+      }
+    });
+    uploadedDates = Object.keys(dailySummaries).length;
+  }, 5);
+  return uploadedDates;
 }
 
 function foodKey(food) {
@@ -117,7 +151,7 @@ function mergeFoods(existingFoods, incomingFoods, mutations) {
 
 exports.main = async (event = {}) => {
   const wxContext = cloud.getWXContext();
-  const openid = wxContext.OPENID || event.openid;
+  const openid = wxContext.OPENID;
   if (!openid) {
     throw new Error("missing openid");
   }
@@ -126,16 +160,24 @@ exports.main = async (event = {}) => {
   const foods = Array.isArray(event.foods) ? event.foods.slice(0, 300) : [];
   const todayMeals = Array.isArray(event.todayMeals) ? event.todayMeals.slice(0, 300) : [];
   const dailyMeals = event.dailyMeals && typeof event.dailyMeals === "object" && !Array.isArray(event.dailyMeals) ? event.dailyMeals : {};
+  const incomingSummaries = event.dailySummaries && typeof event.dailySummaries === "object" && !Array.isArray(event.dailySummaries) ? event.dailySummaries : {};
+  const overwriteDates = [...new Set((Array.isArray(event.overwriteDates) ? event.overwriteDates : [])
+    .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date)
+      && Object.prototype.hasOwnProperty.call(dailyMeals, date)
+      && Array.isArray(dailyMeals[date])))];
   const todayDate = /^\d{4}-\d{2}-\d{2}$/.test(String(event.todayDate || "")) ? event.todayDate : "";
-  const syncScope = event.syncScope === "foods" ? "foods" : "all";
+  const syncScope = ["foods", "calendar"].includes(event.syncScope) ? event.syncScope : "all";
   const energyUnit = event.energyUnit === "kJ" ? "kJ" : "kcal";
   const updatedAt = db.serverDate();
 
+  if (syncScope === "calendar") {
+    await ensureCollection(COLLECTIONS.dailyMeals);
+    const uploadedDates = await saveDailyRecord(openid, dailyMeals, incomingSummaries, todayDate, todayMeals, overwriteDates);
+    return { ok: true, openid, uploadedDates };
+  }
+
   const collectionResults = await Promise.all(Object.keys(COLLECTIONS).map((key) => ensureCollection(COLLECTIONS[key])));
-  const [sharedFoodDoc, existingDailyMealsDoc] = await Promise.all([
-    getDocument(COLLECTIONS.foods, SHARED_FOOD_DOCUMENT),
-    getDocument(COLLECTIONS.dailyMeals, openid)
-  ]);
+  const sharedFoodDoc = await getDocument(COLLECTIONS.foods, SHARED_FOOD_DOCUMENT);
   const foodMutations = [
     ...(Array.isArray(event.foodMutations) ? event.foodMutations : []),
     ...(event.foodMutation ? [event.foodMutation] : [])
@@ -163,12 +205,7 @@ exports.main = async (event = {}) => {
       mealCount: 0
     };
   }
-  const mergedDailyMeals = {
-    ...((existingDailyMealsDoc && existingDailyMealsDoc.dailyMeals) || {}),
-    ...dailyMeals
-  };
-  if (todayDate) mergedDailyMeals[todayDate] = todayMeals;
-  const dailySummaries = buildDailySummaries(mergedDailyMeals);
+  await saveDailyRecord(openid, dailyMeals, incomingSummaries, todayDate, todayMeals, overwriteDates);
 
   const writes = [
     db.collection(COLLECTIONS.profile).doc(openid).set({
@@ -176,16 +213,6 @@ exports.main = async (event = {}) => {
         openid,
         profile,
         energyUnit,
-        updatedAt
-      }
-    }),
-    db.collection(COLLECTIONS.dailyMeals).doc(openid).set({
-      data: {
-        openid,
-        todayDate,
-        todayMeals: todayDate ? mergedDailyMeals[todayDate] : [],
-        dailyMeals: mergedDailyMeals,
-        dailySummaries,
         updatedAt
       }
     })

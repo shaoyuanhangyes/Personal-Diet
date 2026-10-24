@@ -71,6 +71,10 @@ function energyValue(kcal, unit = readEnergyUnit()) {
   return unit === "kJ" ? kcalToKj(kcal) : kcal;
 }
 
+function energyToKcal(value, unit = readEnergyUnit()) {
+  return unit === "kJ" ? Number(value) / 4.184 : Number(value);
+}
+
 function formatEnergy(kcal, unit = readEnergyUnit()) {
   return `${round(energyValue(kcal, unit))} ${unit}`;
 }
@@ -111,6 +115,13 @@ function normalizeFood(food, index = 0) {
     carbs: Number(food.carbs || 0),
     protein: Number(food.protein || 0),
     fat: Number(food.fat || 0),
+    energy: food.energy === undefined || food.energy === null || food.energy === ""
+      ? null : Number(food.energy),
+    servingSize: Number(food.servingSize || 0),
+    packageGrams: Number(food.packageGrams || 0),
+    packageMl: Number(food.packageMl || 0),
+    nutritionBasisGrams: Number(food.nutritionBasisGrams || 0),
+    nutritionBasisMl: Number(food.nutritionBasisMl || 0),
     coefficient: Number(food.coefficient || 1),
     quantity: Number(food.quantity || 100),
     unit: String(food.unit || "g").trim() || "g",
@@ -118,6 +129,42 @@ function normalizeFood(food, index = 0) {
   };
   normalized.signature = foodSignature(normalized);
   return normalized;
+}
+
+function normalizeLabeledFood(input) {
+  const measureUnit = input.measureUnit === "ml" ? "ml" : "g";
+  const packageSize = Number(input.coefficient || 1);
+  const nutritionBasis = Number(input.quantity || 100);
+  const packaged = packageSize > 1;
+  const scale = (packaged ? packageSize : 100) / nutritionBasis;
+  const energy = input.energy === "" || input.energy === undefined || input.energy === null
+    ? null : energyToKcal(input.energy, input.energyUnit || "kcal") * scale;
+  return normalizeFood({
+    name: input.name,
+    carbs: Number(input.carbs || 0) * scale,
+    protein: Number(input.protein || 0) * scale,
+    fat: Number(input.fat || 0) * scale,
+    energy,
+    coefficient: packageSize,
+    quantity: packaged ? 1 : 100,
+    unit: packaged ? "个" : measureUnit,
+    packageGrams: measureUnit === "g" ? packageSize : 0,
+    packageMl: measureUnit === "ml" ? packageSize : 0,
+    nutritionBasisGrams: measureUnit === "g" ? nutritionBasis : 0,
+    nutritionBasisMl: measureUnit === "ml" ? nutritionBasis : 0
+  });
+}
+
+function foodMeasureUnit(food) {
+  return (food.packageMl || food.nutritionBasisMl || food.unit === "ml") ? "ml" : "g";
+}
+
+function foodPackageSize(food) {
+  return Number(food.packageMl || food.packageGrams || 0);
+}
+
+function foodNutritionBasis(food) {
+  return Number(food.nutritionBasisMl || food.nutritionBasisGrams || 0);
 }
 
 function readFoodCatalog() {
@@ -220,7 +267,24 @@ function saveDailyMealHistory(history) {
     normalized[key] = Array.isArray(meals) ? meals.map(normalizeTodayMeal).filter(Boolean) : [];
   });
   setStorage("dietDailyMeals", normalized);
-  saveDailySummaries(buildDailySummaries(normalized));
+  saveDailySummaries({ ...readDailySummaries(), ...buildDailySummaries(normalized) });
+}
+
+function readDirtyMealDates() {
+  const dates = getStorage("dietDirtyMealDates", []);
+  const legacyDate = getStorage("dietTodayMealsDirtyDate", "");
+  return [...new Set([...(Array.isArray(dates) ? dates : []), legacyDate]
+    .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date)))];
+}
+
+function clearDirtyMealDates(dates) {
+  const cleared = new Set(dates);
+  const remaining = readDirtyMealDates().filter((date) => !cleared.has(date));
+  if (remaining.length) setStorage("dietDirtyMealDates", remaining);
+  else wx.removeStorageSync("dietDirtyMealDates");
+  if (cleared.has(getStorage("dietTodayMealsDirtyDate", ""))) {
+    wx.removeStorageSync("dietTodayMealsDirtyDate");
+  }
 }
 
 function syncTodayMealsToHistory(meals) {
@@ -229,10 +293,16 @@ function syncTodayMealsToHistory(meals) {
   saveDailyMealHistory(history);
 }
 
-function saveTodayMeals(meals) {
+function saveTodayMeals(meals, options = {}) {
   const normalized = meals.map(normalizeTodayMeal).filter(Boolean);
   setStorage("dietTodayMeals", normalized);
   setStorage("dietTodayMealsDate", dateKey());
+  if (options.fromCloud) {
+    clearDirtyMealDates([dateKey()]);
+  } else {
+    setStorage("dietDirtyMealDates", [...new Set([...readDirtyMealDates(), dateKey()])]);
+    setStorage("dietTodayMealsDirtyDate", dateKey());
+  }
   syncTodayMealsToHistory(normalized);
 }
 
@@ -272,13 +342,13 @@ function formatServingAmount(food) {
   const countUnit = isCountUnit(food.unit);
   const amount = countUnit ? Number(food.quantity || 0) : foodServingGrams(food);
   const value = Number.isInteger(amount) ? amount : Number(amount.toFixed(2));
-  return `${value}${countUnit ? "个" : "g"}`;
+  return `${value}${countUnit ? (foodPackageSize(food) > 1 ? "个包装" : "个") : foodMeasureUnit(food)}`;
 }
 
 function formatUnitGrams(food) {
   const grams = Number(food.coefficient || 1);
   const value = Number.isInteger(grams) ? grams : Number(grams.toFixed(1));
-  return `${value}g`;
+  return `${value}${foodMeasureUnit(food)}`;
 }
 
 function foodScale(food) {
@@ -296,14 +366,16 @@ function foodMacros(food) {
 }
 
 function foodEnergyPer100g(food) {
+  if (Number.isFinite(food.energy) && food.energy >= 0) return food.energy;
   return Number(food.carbs || 0) * 4 + Number(food.protein || 0) * 4 + Number(food.fat || 0) * 9;
 }
 
 function foodReferenceEnergyLabel(food) {
-  return isCountUnit(food.unit) ? "每个" : "每100g";
+  return isCountUnit(food.unit) ? (foodPackageSize(food) > 1 ? "每包装" : "每个") : `每100${foodMeasureUnit(food)}`;
 }
 
 function foodEnergy(food) {
+  if (Number.isFinite(food.energy) && food.energy >= 0) return food.energy * foodScale(food);
   const macros = foodMacros(food);
   return macros.carbs * 4 + macros.protein * 4 + macros.fat * 9;
 }
@@ -357,14 +429,19 @@ module.exports = {
   addDays,
   buildDailySummaries,
   buildDailySummary,
+  clearDirtyMealDates,
   calculateTargets,
   clampPercent,
   dateKey,
   dedupeFoods,
   energyValue,
+  energyToKcal,
   foodEnergy,
   foodEnergyPer100g,
   foodMacros,
+  foodMeasureUnit,
+  foodNutritionBasis,
+  foodPackageSize,
   foodReferenceEnergyLabel,
   foodServingGrams,
   foodSignature,
@@ -377,9 +454,11 @@ module.exports = {
   macroTargets,
   mealFood,
   normalizeFood,
+  normalizeLabeledFood,
   normalizeTodayMeal,
   parseDateKey,
   readDailyMealHistory,
+  readDirtyMealDates,
   readDailySummaries,
   readEnergyUnit,
   readFoodCatalog,

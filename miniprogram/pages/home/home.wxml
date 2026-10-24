@@ -95,7 +95,6 @@
               <text class="meal-serving">{{item.serving}}</text>
             </view>
             <view class="meal-desc">碳水 {{item.carbs}}g · 蛋白质 {{item.protein}}g · 脂肪 {{item.fat}}g</view>
-            <view wx:if="{{item.hasConsumedAt}}" class="meal-time">摄入时间 {{item.consumedAtText}}</view>
           </view>
           <view class="meal-kcal">{{item.energy}}</view>
         </view>
@@ -109,7 +108,7 @@
       <view class="sheet-grip"></view>
       <view class="calendar-head">
         <view>
-          <view class="calendar-eyebrow">按日期排序</view>
+          <view class="calendar-eyebrow">{{calendarSyncText}}</view>
           <view class="calendar-title">摄入日历</view>
         </view>
         <view class="icon-button small calendar-close-button" bindtap="closeCalendar" role="button" aria-label="关闭日历">×</view>
