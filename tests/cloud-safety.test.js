@@ -147,6 +147,30 @@ test("cloud sync preserves summary-only dates and recalculates dates with meals"
   assert.equal(saved["2026-10-22"].kcal, 120);
 });
 
+test("a profile sync with stale clean today meals does not erase another device's intake", async () => {
+  const service = loadCloudFunction("syncDietData");
+  const today = "2026-10-22";
+  const remoteMeal = { id: "phone-meal", quantity: 100, food: { unit: "g", coefficient: 1, energy: 120 } };
+  service.documents.set("diet_daily_meals/user-a", {
+    todayDate: today,
+    todayMeals: [remoteMeal],
+    dailyMeals: { [today]: [remoteMeal] },
+    dailySummaries: { [today]: { kcal: 120, carbs: 0, protein: 0, fat: 0, mealCount: 1 } }
+  });
+  await service.main({
+    profile: { weight: 70 },
+    todayDate: today,
+    todayMeals: [],
+    dailyMeals: { [today]: [] },
+    dailySummaries: { [today]: { kcal: 0, carbs: 0, protein: 0, fat: 0, mealCount: 0 } },
+    overwriteDates: []
+  });
+  const saved = service.documents.get("diet_daily_meals/user-a");
+  assert.deepEqual(saved.dailyMeals[today].map((meal) => meal.id), ["phone-meal"]);
+  assert.deepEqual(saved.todayMeals.map((meal) => meal.id), ["phone-meal"]);
+  assert.equal(saved.dailySummaries[today].kcal, 120);
+});
+
 test("calendar-only sync preserves cloud meals and does not overwrite profile or foods", async () => {
   const service = loadCloudFunction("syncDietData");
   const remoteMeal = { id: "remote", quantity: 100, food: { unit: "g", coefficient: 1, energy: 120 } };
@@ -185,6 +209,60 @@ test("an explicitly dirty historical date replaces the old cloud meal", async ()
   assert.equal(saved.dailySummaries[date].kcal, 220);
 });
 
+test("same-day additions from two stale devices both survive", async () => {
+  const service = loadCloudFunction("syncDietData");
+  const date = "2026-10-20";
+  const meal = (id, kcal) => ({ id, quantity: 100, food: { unit: "g", coefficient: 1, energy: kcal } });
+  const original = meal("original", 100);
+  const phone = meal("phone", 120);
+  const desktop = meal("desktop", 150);
+  service.documents.set("diet_daily_meals/user-a", {
+    dailyMeals: { [date]: [original] }, dailySummaries: {}
+  });
+  await service.main({ syncScope: "calendar", dailyMeals: { [date]: [phone, original] },
+    mealBases: { [date]: [original] }, overwriteDates: [date] });
+  const result = await service.main({ syncScope: "calendar", dailyMeals: { [date]: [desktop, original] },
+    mealBases: { [date]: [original] }, overwriteDates: [date] });
+  const saved = service.documents.get("diet_daily_meals/user-a");
+  assert.deepEqual(Array.from(saved.dailyMeals[date], (entry) => entry.id), ["desktop", "phone", "original"]);
+  assert.equal(saved.dailySummaries[date].kcal, 370);
+  assert.deepEqual(Array.from(result.confirmedMeals[date], (entry) => entry.id), ["desktop", "phone", "original"]);
+});
+
+test("same-day deletion keeps unseen additions and does not resurrect remote deletions", async () => {
+  const service = loadCloudFunction("syncDietData");
+  const date = "2026-10-20";
+  const meal = (id) => ({ id, quantity: 100, food: { unit: "g", coefficient: 1, energy: 100 } });
+  const a = meal("a");
+  const b = meal("b");
+  const c = meal("c");
+  service.documents.set("diet_daily_meals/user-a", { dailyMeals: { [date]: [a, b, c] } });
+  await service.main({ syncScope: "calendar", dailyMeals: { [date]: [a] },
+    mealBases: { [date]: [a, b] }, overwriteDates: [date] });
+  assert.deepEqual(Array.from(service.documents.get("diet_daily_meals/user-a").dailyMeals[date], (entry) => entry.id), ["a", "c"]);
+
+  await service.main({ syncScope: "calendar", dailyMeals: { [date]: [] },
+    mealBases: { [date]: [a, b] }, overwriteDates: [date] });
+  assert.deepEqual(Array.from(service.documents.get("diet_daily_meals/user-a").dailyMeals[date], (entry) => entry.id), ["c"]);
+
+  await service.main({ syncScope: "calendar", dailyMeals: { [date]: [a, b, c] },
+    mealBases: { [date]: [a, b] }, overwriteDates: [date] });
+  assert.deepEqual(Array.from(service.documents.get("diet_daily_meals/user-a").dailyMeals[date], (entry) => entry.id), ["c"]);
+});
+
+test("a later upload can delete a meal that was added in an earlier in-flight upload", async () => {
+  const service = loadCloudFunction("syncDietData");
+  const date = "2026-10-20";
+  const meal = { id: "temporary", quantity: 100, food: { unit: "g", coefficient: 1, energy: 100 } };
+  await service.main({ syncScope: "calendar", dailyMeals: { [date]: [meal] },
+    mealBases: { [date]: [] }, overwriteDates: [date] });
+  await service.main({ syncScope: "calendar", dailyMeals: { [date]: [] },
+    mealBases: { [date]: [meal] }, overwriteDates: [date] });
+  const saved = service.documents.get("diet_daily_meals/user-a");
+  assert.deepEqual(Array.from(saved.dailyMeals[date]), []);
+  assert.equal(saved.dailySummaries[date].mealCount, 0);
+});
+
 test("concurrent syncs of different dates retain both records", async () => {
   const service = loadCloudFunction("syncDietData");
   const meal = { quantity: 100, food: { unit: "g", coefficient: 1, energy: 120 } };
@@ -196,6 +274,52 @@ test("concurrent syncs of different dates retain both records", async () => {
   const saved = service.documents.get("diet_daily_meals/user-a");
   assert.equal(saved.dailyMeals["2026-10-20"].length, 1);
   assert.equal(saved.dailyMeals["2026-10-21"].length, 1);
+});
+
+test("concurrent shared food additions retain both foods", async () => {
+  const service = loadCloudFunction("syncDietData");
+  const foods = [
+    { id: "food-a", name: "苹果", unit: "个" },
+    { id: "food-b", name: "梨", unit: "个" }
+  ];
+  await Promise.all(foods.map((food) => service.main({
+    syncScope: "foods",
+    foodMutation: { type: "upsert", food }
+  })));
+  const saved = service.documents.get("diet_food_catalogs/shared");
+  assert.deepEqual(Array.from(saved.foods, (food) => food.id).sort(), ["food-a", "food-b"]);
+});
+
+test("login fails if the login cloud function cannot supply an OpenID", async () => {
+  const storage = new Map();
+  const calls = [];
+  global.getApp = () => ({ globalData: { cloudReady: true } });
+  global.wx = {
+    login: ({ success }) => success({ code: "test-code" }),
+    getStorageSync: (key) => storage.get(key) || "",
+    setStorageSync: (key, value) => storage.set(key, value),
+    removeStorageSync: (key) => storage.delete(key),
+    cloud: { callFunction: async ({ name }) => {
+      calls.push(name);
+      return { result: {} };
+    } }
+  };
+  const sync = require("../miniprogram/utils/cloud-sync");
+  await assert.rejects(sync.loginWithWechat(), /OpenID/);
+  assert.deepEqual(calls, ["login"]);
+  assert.equal(sync.getStoredUser(), null);
+});
+
+test("an old stored login without OpenID is treated as logged out", () => {
+  const storage = new Map([["dietUser", { name: "微信用户", openid: "" }]]);
+  global.wx = {
+    getStorageSync: (key) => storage.get(key) || "",
+    setStorageSync: (key, value) => storage.set(key, value),
+    removeStorageSync: (key) => storage.delete(key)
+  };
+  const sync = require("../miniprogram/utils/cloud-sync");
+  assert.equal(sync.getStoredUser(), null);
+  assert.equal(storage.has("dietUser"), true);
 });
 
 test("failed cloud hydration does not upload local data", async () => {

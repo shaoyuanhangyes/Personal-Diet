@@ -2,6 +2,7 @@ const diet = require("../../utils/diet");
 const cloudSync = require("../../utils/cloud-sync");
 const MEAL_PAGE_SIZE = 5;
 const FOOD_TILES_PER_ROW = 4;
+let mealIdSequence = 0;
 const foodPickerAnchor = (index) => `food-tile-${Math.max(0, Math.floor(index / FOOD_TILES_PER_ROW) - 1) * FOOD_TILES_PER_ROW}`;
 const quantityUnitLabel = (food) => {
   if (!food) return "克数";
@@ -50,15 +51,27 @@ Page({
   },
 
   onShow() {
+    const viewEpoch = this.viewEpoch = (this.viewEpoch || 0) + 1;
     this.loadData();
+    return cloudSync.refreshCalendarHistory().then((result) => {
+      if (this.viewEpoch !== viewEpoch || result.localOnly) return;
+      this.renderMealList(diet.readTodayMeals());
+      this.renderSummary();
+    });
   },
 
   onHide() {
+    this.viewEpoch = (this.viewEpoch || 0) + 1;
     this.finishFoodPicker();
   },
 
   onUnload() {
     if (this.addFeedbackTimer) clearTimeout(this.addFeedbackTimer);
+  },
+
+  refreshFromCloud() {
+    this.renderMealList(diet.readTodayMeals());
+    this.renderSummary();
   },
 
   loadData() {
@@ -201,16 +214,16 @@ Page({
     const unit = diet.readEnergyUnit();
     return meals.map((meal) => {
       const food = diet.mealFood(meal);
-      const macros = diet.foodMacros(food);
+      const intake = diet.mealIntake(meal);
       return {
         id: meal.id,
         initial: String(food.name || "?").slice(0, 1),
         name: food.name,
         serving: diet.formatServingAmount(food),
-        energy: diet.formatEnergy(diet.foodEnergy(food), unit),
-        carbs: diet.formatDecimal(macros.carbs),
-        protein: diet.formatDecimal(macros.protein),
-        fat: diet.formatDecimal(macros.fat),
+        energy: diet.formatEnergy(intake.kcal, unit),
+        carbs: diet.formatDecimal(intake.carbs),
+        protein: diet.formatDecimal(intake.protein),
+        fat: diet.formatDecimal(intake.fat),
         consumedAtText: diet.formatDateTime(meal.consumedAt),
         hasConsumedAt: !!meal.consumedAt,
         rowClass: meal.id === highlightedId ? "is-new" : ""
@@ -317,7 +330,7 @@ Page({
     }
     const meals = diet.readTodayMeals();
     const meal = diet.normalizeTodayMeal({
-      id: `meal-${Date.now()}`,
+      id: `meal-${Date.now()}-${++mealIdSequence}-${Math.random().toString(36).slice(2, 10)}`,
       quantity,
       consumedAt: Date.now(),
       food: { ...food, quantity }

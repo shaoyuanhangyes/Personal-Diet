@@ -1,3 +1,5 @@
+const cloudSync = require("./utils/cloud-sync");
+
 App({
   globalData: {
     dietMealVersion: 0,
@@ -15,5 +17,24 @@ App({
         this.globalData.cloudReady = false;
       }
     }
+    if (typeof wx.onNetworkStatusChange === "function") {
+      wx.onNetworkStatusChange((status) => {
+        if (status.isConnected) {
+          cloudSync.retryPendingSync();
+          cloudSync.refreshCalendarHistory().then((result) => {
+            if (result.localOnly || typeof getCurrentPages !== "function") return;
+            const pages = getCurrentPages();
+            const currentPage = pages[pages.length - 1];
+            if (currentPage && typeof currentPage.refreshFromCloud === "function") {
+              currentPage.refreshFromCloud();
+            }
+          });
+        }
+      });
+    }
+  },
+  onShow() {
+    cloudSync.retryPendingSync();
+    cloudSync.refreshCalendarHistory();
   }
 });

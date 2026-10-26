@@ -277,6 +277,11 @@ function readDirtyMealDates() {
     .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date)))];
 }
 
+function readMealBases() {
+  const bases = getStorage("dietMealBases", {});
+  return bases && typeof bases === "object" && !Array.isArray(bases) ? bases : {};
+}
+
 function clearDirtyMealDates(dates) {
   const cleared = new Set(dates);
   const remaining = readDirtyMealDates().filter((date) => !cleared.has(date));
@@ -285,6 +290,9 @@ function clearDirtyMealDates(dates) {
   if (cleared.has(getStorage("dietTodayMealsDirtyDate", ""))) {
     wx.removeStorageSync("dietTodayMealsDirtyDate");
   }
+  const bases = readMealBases();
+  dates.forEach((date) => { delete bases[date]; });
+  setStorage("dietMealBases", bases);
 }
 
 function syncTodayMealsToHistory(meals) {
@@ -294,14 +302,28 @@ function syncTodayMealsToHistory(meals) {
 }
 
 function saveTodayMeals(meals, options = {}) {
+  const today = dateKey();
   const normalized = meals.map(normalizeTodayMeal).filter(Boolean);
+  if (!options.fromCloud && !readDirtyMealDates().includes(today)) {
+    setStorage("dietMealBases", { ...readMealBases(), [today]: readTodayMeals() });
+  } else if (!options.fromCloud) {
+    const bases = readMealBases();
+    const base = Array.isArray(bases[today]) ? bases[today] : [];
+    const remainingIds = new Set(normalized.map((meal) => meal.id));
+    const baseIds = new Set(base.map((meal) => meal.id));
+    const deletedSinceLastEdit = readTodayMeals().filter((meal) =>
+      !remainingIds.has(meal.id) && !baseIds.has(meal.id));
+    if (deletedSinceLastEdit.length) {
+      setStorage("dietMealBases", { ...bases, [today]: [...base, ...deletedSinceLastEdit] });
+    }
+  }
   setStorage("dietTodayMeals", normalized);
-  setStorage("dietTodayMealsDate", dateKey());
+  setStorage("dietTodayMealsDate", today);
   if (options.fromCloud) {
-    clearDirtyMealDates([dateKey()]);
+    clearDirtyMealDates([today]);
   } else {
-    setStorage("dietDirtyMealDates", [...new Set([...readDirtyMealDates(), dateKey()])]);
-    setStorage("dietTodayMealsDirtyDate", dateKey());
+    setStorage("dietDirtyMealDates", [...new Set([...readDirtyMealDates(), today])]);
+    setStorage("dietTodayMealsDirtyDate", today);
   }
   syncTodayMealsToHistory(normalized);
 }
@@ -385,14 +407,18 @@ function mealFood(meal) {
   return { ...meal.food, quantity: Number.isFinite(quantity) ? quantity : 0 };
 }
 
+function mealIntake(meal) {
+  const food = mealFood(meal);
+  return { kcal: foodEnergy(food), ...foodMacros(food) };
+}
+
 function totalIntake(meals = readTodayMeals()) {
   return meals.reduce((sum, meal) => {
-    const food = mealFood(meal);
-    const macros = foodMacros(food);
-    sum.kcal += foodEnergy(food);
-    sum.carbs += macros.carbs;
-    sum.protein += macros.protein;
-    sum.fat += macros.fat;
+    const intake = mealIntake(meal);
+    sum.kcal += intake.kcal;
+    sum.carbs += intake.carbs;
+    sum.protein += intake.protein;
+    sum.fat += intake.fat;
     return sum;
   }, { kcal: 0, carbs: 0, protein: 0, fat: 0 });
 }
@@ -453,12 +479,14 @@ module.exports = {
   isCountUnit,
   macroTargets,
   mealFood,
+  mealIntake,
   normalizeFood,
   normalizeLabeledFood,
   normalizeTodayMeal,
   parseDateKey,
   readDailyMealHistory,
   readDirtyMealDates,
+  readMealBases,
   readDailySummaries,
   readEnergyUnit,
   readFoodCatalog,

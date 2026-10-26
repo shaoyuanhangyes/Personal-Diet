@@ -78,11 +78,15 @@ Page({
   },
 
   onShow() {
+    const viewEpoch = this.viewEpoch = (this.viewEpoch || 0) + 1;
     const dayType = wx.getStorageSync("dietDayType") || "training";
     const todayMeals = diet.readTodayMeals();
     diet.syncTodayMealsToHistory(todayMeals);
     this.setData({ dayType }, () => {
       this.renderPage();
+    });
+    return cloudSync.refreshCalendarHistory().then((result) => {
+      if (this.viewEpoch === viewEpoch && !result.localOnly) this.renderPage();
     });
   },
 
@@ -91,12 +95,17 @@ Page({
   },
 
   onHide() {
+    this.viewEpoch = (this.viewEpoch || 0) + 1;
     if (this.homeRingTimer) clearTimeout(this.homeRingTimer);
   },
 
   refreshFromMealChange() {
     const todayMeals = diet.readTodayMeals();
     diet.syncTodayMealsToHistory(todayMeals);
+    this.renderPage();
+  },
+
+  refreshFromCloud() {
     this.renderPage();
   },
 
@@ -134,31 +143,42 @@ Page({
     const homeMealIndexes = Object.create(null);
     meals.forEach((meal) => {
       const food = diet.mealFood(meal);
-      const signature = diet.foodSignature(food);
+      const signature = [
+        diet.foodSignature(food),
+        food.coefficient,
+        diet.foodMeasureUnit(food),
+        diet.foodPackageSize(food)
+      ].join("|");
+      const intake = diet.mealIntake(meal);
       const existingIndex = homeMealIndexes[signature];
       if (existingIndex !== undefined) {
         const existing = mergedHomeMeals[existingIndex];
         existing.food.quantity += Number(food.quantity || 0);
+        existing.intake.kcal += intake.kcal;
+        existing.intake.carbs += intake.carbs;
+        existing.intake.protein += intake.protein;
+        existing.intake.fat += intake.fat;
         return;
       }
       homeMealIndexes[signature] = mergedHomeMeals.length;
       mergedHomeMeals.push({
         id: meal.id,
-        food: { ...food }
+        food: { ...food },
+        intake
       });
     });
     const homeMeals = mergedHomeMeals.map((meal) => {
       const food = meal.food;
-      const macros = diet.foodMacros(food);
+      const intake = meal.intake;
       return {
         id: meal.id,
         initial: String(food.name || "?").slice(0, 1),
         name: food.name,
         serving: diet.formatServingAmount(food),
-        carbs: diet.formatDecimal(macros.carbs),
-        protein: diet.formatDecimal(macros.protein),
-        fat: diet.formatDecimal(macros.fat),
-        energy: diet.formatEnergy(diet.foodEnergy(food), unit)
+        carbs: diet.formatDecimal(intake.carbs),
+        protein: diet.formatDecimal(intake.protein),
+        fat: diet.formatDecimal(intake.fat),
+        energy: diet.formatEnergy(intake.kcal, unit)
       };
     });
 

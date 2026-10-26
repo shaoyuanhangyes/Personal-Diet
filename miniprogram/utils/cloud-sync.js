@@ -3,7 +3,17 @@ const diet = require("./diet");
 
 const syncTimers = {};
 const pendingSyncPayloads = {};
-let calendarRefreshPromise = null;
+let calendarRefreshState = null;
+let cloudWriteTail = Promise.resolve();
+let retryPromise = null;
+let retryTimer = null;
+let sessionEpoch = 0;
+
+function queueCloudWrite(run) {
+  const result = cloudWriteTail.then(run, run);
+  cloudWriteTail = result.catch(() => {});
+  return result;
+}
 
 function getCloudReady() {
   let app = null;
@@ -17,7 +27,8 @@ function getCloudReady() {
 
 function getStoredUser() {
   try {
-    return wx.getStorageSync(USER_STORAGE_KEY) || null;
+    const user = wx.getStorageSync(USER_STORAGE_KEY);
+    return user && user.openid ? user : null;
   } catch (error) {
     return null;
   }
@@ -32,6 +43,11 @@ function clearStoredUser() {
 }
 
 function logoutAndClearLocalHistory() {
+  sessionEpoch += 1;
+  calendarRefreshState = null;
+  retryPromise = null;
+  if (retryTimer) clearTimeout(retryTimer);
+  retryTimer = null;
   Object.keys(syncTimers).forEach((channel) => {
     clearTimeout(syncTimers[channel]);
     delete syncTimers[channel];
@@ -43,6 +59,7 @@ function logoutAndClearLocalHistory() {
     "dietTodayMealsDate",
     "dietTodayMealsDirtyDate",
     "dietDirtyMealDates",
+    "dietMealBases",
     "dietDailyMeals",
     "dietDailySummaries",
     "dietLastSyncPayload",
@@ -79,8 +96,54 @@ function callCloudFunction(name, data = {}) {
 function resolveOpenId() {
   return callCloudFunction("login").then((result) => {
     const data = result && result.result ? result.result : {};
-    return data.openid || data.OPENID || "";
+    const openid = data.openid || data.OPENID;
+    if (!openid) throw new Error("微信登录未返回 OpenID");
+    return openid;
   });
+}
+
+function hasPendingSync() {
+  const pendingFoods = wx.getStorageSync("dietPendingFoodMutations");
+  const user = getStoredUser();
+  return !!(user && user.openid && diet.readDirtyMealDates().length > 0)
+    || (Array.isArray(pendingFoods) && pendingFoods.length > 0)
+    || !!wx.getStorageSync("dietFoodCatalogDirty");
+}
+
+function schedulePendingRetry() {
+  if (retryTimer || !getCloudReady() || !hasPendingSync()) return;
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    retryPendingSync();
+  }, 15000);
+  if (retryTimer && typeof retryTimer.unref === "function") retryTimer.unref();
+}
+
+function retryPendingSync() {
+  if (retryPromise) return retryPromise;
+  if (!getCloudReady()) return Promise.resolve([]);
+  const tasks = [];
+  const user = getStoredUser();
+  if (user && user.openid && diet.readDirtyMealDates().length) {
+    tasks.push(refreshCalendarHistory());
+  }
+  const pendingFoods = wx.getStorageSync("dietPendingFoodMutations");
+  if (wx.getStorageSync("dietFoodCatalogDirty")
+    || (Array.isArray(pendingFoods) && pendingFoods.length)) {
+    tasks.push(syncDietData({
+      syncScope: "foods",
+      foods: diet.readFoodCatalog(),
+      foodMutations: Array.isArray(pendingFoods) ? pendingFoods : []
+    }));
+  }
+  if (!tasks.length) return Promise.resolve([]);
+  const request = Promise.all(tasks).finally(() => {
+    if (retryPromise !== request) return;
+    retryPromise = null;
+    if (hasPendingSync()) schedulePendingRetry();
+  });
+  retryPromise = request;
+  return retryPromise;
 }
 
 function fetchDietData() {
@@ -116,18 +179,42 @@ function calendarRecordMatches(key, localMeals, localSummaries, cloudMeals, clou
   return true;
 }
 
+function applyConfirmedMealDates(sentMeals, confirmedMeals, dates) {
+  const current = diet.readDailyMealHistory();
+  const safeDates = dates.filter((date) => Array.isArray(confirmedMeals[date])
+    && JSON.stringify(current[date]) === JSON.stringify(sentMeals[date]));
+  if (!safeDates.length) return;
+  const next = { ...current };
+  safeDates.forEach((date) => { next[date] = confirmedMeals[date]; });
+  diet.saveDailyMealHistory(next);
+  const today = diet.dateKey();
+  if (safeDates.includes(today)) diet.saveTodayMeals(confirmedMeals[today], { fromCloud: true });
+  diet.clearDirtyMealDates(safeDates);
+  if (typeof getCurrentPages === "function") {
+    getCurrentPages().forEach((page) => {
+      if (page && typeof page.refreshFromCloud === "function") page.refreshFromCloud();
+    });
+  }
+}
+
 function refreshCalendarHistory(onRead) {
-  if (calendarRefreshPromise) return calendarRefreshPromise;
   const user = getStoredUser();
   if (!user || !user.openid) {
     return Promise.resolve({ localOnly: true, message: "登录后可跨设备同步日历" });
   }
-  calendarRefreshPromise = fetchDietData().then((cloudData) => {
-    if (cloudData.localOnly) return cloudData;
+  const epoch = sessionEpoch;
+  if (calendarRefreshState && calendarRefreshState.epoch === epoch
+    && calendarRefreshState.openid === user.openid) return calendarRefreshState.promise;
+  const state = { epoch, openid: user.openid, promise: null };
+  const sessionIsCurrent = () => {
     const currentUser = getStoredUser();
-    if (!currentUser) return { localOnly: true, message: "已退出登录" };
-    if (currentUser.openid !== user.openid) {
-      return { localOnly: true, message: "登录账号已变化，请重新打开日历" };
+    return epoch === sessionEpoch && currentUser && currentUser.openid === user.openid;
+  };
+  const request = fetchDietData().then((cloudData) => {
+    if (!sessionIsCurrent()) return { localOnly: true, message: "登录会话已变化" };
+    if (cloudData.localOnly) {
+      schedulePendingRetry();
+      return cloudData;
     }
     if (cloudData.openid !== user.openid) {
       return { localOnly: true, message: "云端账号不一致，请重新登录" };
@@ -165,6 +252,8 @@ function refreshCalendarHistory(onRead) {
     });
     if (restoreToday) summaries[today] = diet.buildDailySummary(cloudTodayMeals);
     diet.saveDailySummaries(summaries);
+    let expectedMeals = mergedMeals;
+    let expectedSummaries = summaries;
     const readCount = calendarRecordDates(cloudMeals, cloudSummaries).length;
     const readMessage = `云端已读取 ${readCount} 天记录`;
     if (onRead) onRead({ localOnly: false, message: readMessage });
@@ -178,18 +267,18 @@ function refreshCalendarHistory(onRead) {
       }
     });
     const verify = (verifiedData) => {
+      if (!sessionIsCurrent()) return { localOnly: true, message: "登录会话已变化" };
       if (verifiedData.localOnly || verifiedData.openid !== user.openid) {
         return { localOnly: false, message: `${readMessage} · 上传未验证` };
       }
       const verifiedMeals = verifiedData.dailyMeals || {};
       const verifiedSummaries = verifiedData.dailySummaries || {};
       const uploadedCount = localDates.filter((key) =>
-        calendarRecordMatches(key, mergedMeals, summaries, verifiedMeals, verifiedSummaries)).length;
+        calendarRecordMatches(key, expectedMeals, expectedSummaries, verifiedMeals, verifiedSummaries)).length;
       const verifiedDirtyDates = dirtyDates.filter((date) =>
-        calendarRecordMatches(date, mergedMeals, summaries, verifiedMeals, verifiedSummaries)
-        && JSON.stringify(mergedMeals[date]) === JSON.stringify(verifiedMeals[date]));
-      diet.clearDirtyMealDates(verifiedDirtyDates.filter((date) =>
-        JSON.stringify(diet.readDailyMealHistory()[date]) === JSON.stringify(mergedMeals[date])));
+        calendarRecordMatches(date, expectedMeals, expectedSummaries, verifiedMeals, verifiedSummaries)
+        && JSON.stringify(expectedMeals[date]) === JSON.stringify(verifiedMeals[date]));
+      applyConfirmedMealDates(localMeals, expectedMeals, verifiedDirtyDates);
       const allVerified = uploadedCount === localDates.length && verifiedDirtyDates.length === dirtyDates.length;
       return {
         localOnly: false,
@@ -208,27 +297,46 @@ function refreshCalendarHistory(onRead) {
       if (summaries[key]) uploadSummaries[key] = summaries[key];
     });
     const uploadToday = needsUpload.includes(today) && (dirtyDates.includes(today) || !cloudTodayMeals);
-    return callCloudFunction("syncDietData", {
+    return queueCloudWrite(() => {
+      const current = getStoredUser();
+      if (epoch !== sessionEpoch || !current || current.openid !== user.openid) {
+        throw new Error("登录账号已变化");
+      }
+      return callCloudFunction("syncDietData", {
       syncScope: "calendar",
       dailyMeals: uploadMeals,
       dailySummaries: uploadSummaries,
       overwriteDates: dirtyDates.filter((date) => needsUpload.includes(date)),
+      mealBases: diet.readMealBases(),
       todayDate: uploadToday ? today : "",
       todayMeals: uploadToday ? diet.readTodayMeals() : []
+      });
     }).then((response) => {
       const result = response && response.result;
       if (!result || result.ok !== true || result.openid !== user.openid) {
         throw new Error("云端未确认写入");
       }
+      if (result.confirmedMeals && typeof result.confirmedMeals === "object") {
+        expectedMeals = { ...mergedMeals, ...result.confirmedMeals };
+        expectedSummaries = { ...summaries, ...diet.buildDailySummaries(result.confirmedMeals) };
+      }
       return fetchDietData().then(verify);
-    }).catch(() => ({ localOnly: false, message: `${readMessage} · 上传未验证` }));
-  }).catch((error) => ({
-    localOnly: true,
-    message: error && error.message ? `云端读取失败：${error.message}` : "云端读取失败，显示本机记录"
-  })).finally(() => {
-    calendarRefreshPromise = null;
+    }).catch(() => {
+      if (sessionIsCurrent()) schedulePendingRetry();
+      return { localOnly: false, message: `${readMessage} · 上传未验证` };
+    });
+  }).catch((error) => {
+    if (sessionIsCurrent()) schedulePendingRetry();
+    return {
+      localOnly: true,
+      message: error && error.message ? `云端读取失败：${error.message}` : "云端读取失败，显示本机记录"
+    };
+  }).finally(() => {
+    if (calendarRefreshState === state) calendarRefreshState = null;
   });
-  return calendarRefreshPromise;
+  state.promise = request;
+  calendarRefreshState = state;
+  return request;
 }
 
 function buildDietPayload(payload = {}) {
@@ -246,6 +354,7 @@ function buildDietPayload(payload = {}) {
     },
     todayDate: diet.dateKey(),
     overwriteDates: diet.readDirtyMealDates(),
+    mealBases: diet.readMealBases(),
     foodMutation: payload.foodMutation || null,
     foodMutations: Array.isArray(payload.foodMutations) ? payload.foodMutations : [],
     syncScope: payload.syncScope || "all",
@@ -257,7 +366,6 @@ function buildDietPayload(payload = {}) {
 function loginWithWechat(payload = {}) {
   return wechatLogin()
     .then(() => resolveOpenId()
-      .catch(() => "")
       .then((openid) => {
         const user = {
           name: "微信用户",
@@ -271,6 +379,10 @@ function loginWithWechat(payload = {}) {
           if (cloudData.localOnly) {
             clearStoredUser();
             throw new Error(cloudData.message || "云端数据读取失败，请稍后重试");
+          }
+          if (cloudData.openid !== openid) {
+            clearStoredUser();
+            throw new Error("云端账号与登录 OpenID 不一致");
           }
           const hasCloudProfile = cloudData && (cloudData.hasProfileData || (cloudData.profile && Object.keys(cloudData.profile).length > 0));
           const hasCloudFoods = cloudData && (cloudData.hasFoodData || (Array.isArray(cloudData.foods) && cloudData.foods.length > 0));
@@ -293,6 +405,7 @@ function loginWithWechat(payload = {}) {
 
 function syncDietData(payload = {}) {
   const user = getStoredUser();
+  const epoch = sessionEpoch;
   const data = buildDietPayload({
     ...payload,
     openid: user && user.openid ? user.openid : ""
@@ -302,17 +415,23 @@ function syncDietData(payload = {}) {
     return Promise.resolve({ localOnly: true, message: "未登录，已保存在本机" });
   }
   if (!foodOnly) wx.setStorageSync("dietLastSyncPayload", data);
-  return callCloudFunction("syncDietData", data)
+  return queueCloudWrite(() => {
+    const current = getStoredUser();
+    if (epoch !== sessionEpoch || (!foodOnly && (!current || current.openid !== user.openid))) {
+      throw new Error("登录账号已变化");
+    }
+    return callCloudFunction("syncDietData", data);
+  })
     .then((result) => {
       const detail = result && result.result;
       if (!detail || detail.ok !== true || (user && user.openid && detail.openid !== user.openid)) {
         throw new Error("云端未确认写入");
       }
+      if (epoch !== sessionEpoch) throw new Error("登录账号已变化");
       if (!foodOnly) {
-        const currentHistory = diet.readDailyMealHistory();
-        const confirmedDates = data.overwriteDates.filter((date) =>
-          JSON.stringify(currentHistory[date]) === JSON.stringify(data.dailyMeals[date]));
-        diet.clearDirtyMealDates(confirmedDates);
+        applyConfirmedMealDates(data.dailyMeals,
+          detail.confirmedMeals && typeof detail.confirmedMeals === "object" ? detail.confirmedMeals : data.dailyMeals,
+          data.overwriteDates);
       }
       if (foodOnly) {
         const sentMutations = [
@@ -341,10 +460,13 @@ function syncDietData(payload = {}) {
         detail
       };
     })
-    .catch((error) => ({
-      localOnly: true,
-      message: error && (error.errMsg || error.message) ? `云同步失败：${error.errMsg || error.message}` : "已保存在本机"
-    }));
+    .catch((error) => {
+      if (epoch === sessionEpoch) schedulePendingRetry();
+      return {
+        localOnly: true,
+        message: error && (error.errMsg || error.message) ? `云同步失败：${error.errMsg || error.message}` : "已保存在本机"
+      };
+    });
 }
 
 function queueSyncDietData(payload = {}, delay = 700) {
@@ -380,5 +502,6 @@ module.exports = {
   logoutAndClearLocalHistory,
   queueSyncDietData,
   refreshCalendarHistory,
+  retryPendingSync,
   syncDietData
 };

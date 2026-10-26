@@ -138,3 +138,34 @@ test("the meal add button only confirms the open picker and does not add a meal"
   assert.equal(page.data.quantity, "");
   assert.equal(page.data.foodPickerOpen, false);
 });
+
+test("meal IDs stay unique when two entries are added in one millisecond", () => {
+  const page = createPage([{ id: "rice", name: "米饭", unit: "g", coefficient: 1, carbs: 20 }]);
+  const originalRead = diet.readTodayMeals;
+  const originalSave = diet.saveTodayMeals;
+  const originalNow = Date.now;
+  let meals = [];
+  diet.readTodayMeals = () => meals;
+  diet.saveTodayMeals = (next) => { meals = next; };
+  Date.now = () => 123456789;
+  page.notifyHomeRefresh = () => {};
+  page.syncMeals = () => {};
+  page.renderMealList = () => {};
+  page.refreshFoodOrder = () => {};
+  page.showAddSuccess = () => {};
+  page.renderSummary = () => {};
+  try {
+    page.data.quantity = "1";
+    page.addMeal();
+    page.data.quantity = "2";
+    page.addMeal();
+    assert.equal(new Set(meals.map((meal) => meal.id)).size, 2);
+    const deletedId = meals[0].id;
+    page.deleteMeal({ currentTarget: { dataset: { id: deletedId } } });
+    assert.deepEqual(meals.map((meal) => meal.quantity), [1]);
+  } finally {
+    diet.readTodayMeals = originalRead;
+    diet.saveTodayMeals = originalSave;
+    Date.now = originalNow;
+  }
+});

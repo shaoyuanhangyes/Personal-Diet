@@ -59,17 +59,36 @@ function mealSummary(meals) {
   }, { kcal: 0, carbs: 0, protein: 0, fat: 0, mealCount: 0 });
 }
 
-async function saveDailyRecord(openid, incomingMeals, incomingSummaries, todayDate, todayMeals, overwriteDates) {
+function mergeMealChanges(remote, local, base) {
+  if (!Array.isArray(base)) return local;
+  const key = (meal) => meal && meal.id ? String(meal.id) : JSON.stringify(meal);
+  const baseById = new Map(base.map((meal) => [key(meal), meal]));
+  const localById = new Map(local.map((meal) => [key(meal), meal]));
+  const deleted = new Set([...baseById.keys()].filter((id) => !localById.has(id)));
+  const changed = local.filter((meal) => {
+    const previous = baseById.get(key(meal));
+    return !previous || JSON.stringify(previous) !== JSON.stringify(meal);
+  });
+  const changedIds = new Set(changed.map(key));
+  return [...changed, ...remote.filter((meal) => !deleted.has(key(meal)) && !changedIds.has(key(meal)))];
+}
+
+async function saveDailyRecord(openid, incomingMeals, incomingSummaries, todayDate, todayMeals, overwriteDates, mealBases) {
   let uploadedDates = 0;
+  const confirmedMeals = {};
   await db.runTransaction(async (transaction) => {
     const document = transaction.collection(COLLECTIONS.dailyMeals).doc(openid);
     const result = await document.get();
     const existing = result && result.data ? result.data : null;
-    const mergedMeals = { ...incomingMeals, ...((existing && existing.dailyMeals) || {}) };
+    const existingMeals = (existing && existing.dailyMeals) || {};
+    const mergedMeals = { ...incomingMeals, ...existingMeals };
     overwriteDates.forEach((date) => {
-      mergedMeals[date] = incomingMeals[date];
+      mergedMeals[date] = mergeMealChanges(existingMeals[date] || [], incomingMeals[date], mealBases[date]);
+      confirmedMeals[date] = mergedMeals[date];
     });
-    if (todayDate) mergedMeals[todayDate] = todayMeals;
+    const writeToday = todayDate && (overwriteDates.includes(todayDate)
+      || !Object.prototype.hasOwnProperty.call(existingMeals, todayDate));
+    if (writeToday && !overwriteDates.includes(todayDate)) mergedMeals[todayDate] = todayMeals;
 
     const calculated = {};
     Object.keys(mergedMeals).forEach((date) => {
@@ -80,7 +99,7 @@ async function saveDailyRecord(openid, incomingMeals, incomingSummaries, todayDa
     overwriteDates.forEach((date) => {
       calculated[date] = mealSummary(mergedMeals[date]);
     });
-    if (todayDate) calculated[todayDate] = mealSummary(todayMeals);
+    if (writeToday) calculated[todayDate] = mealSummary(mergedMeals[todayDate]);
     const dailySummaries = {
       ...incomingSummaries,
       ...((existing && existing.dailySummaries) || {}),
@@ -90,7 +109,7 @@ async function saveDailyRecord(openid, incomingMeals, incomingSummaries, todayDa
       data: {
         openid,
         todayDate: todayDate || (existing && existing.todayDate) || "",
-        todayMeals: todayDate ? todayMeals : ((existing && existing.todayMeals) || []),
+        todayMeals: todayDate ? mergedMeals[todayDate] : ((existing && existing.todayMeals) || []),
         dailyMeals: mergedMeals,
         dailySummaries,
         updatedAt: db.serverDate()
@@ -98,7 +117,7 @@ async function saveDailyRecord(openid, incomingMeals, incomingSummaries, todayDa
     });
     uploadedDates = Object.keys(dailySummaries).length;
   }, 5);
-  return uploadedDates;
+  return { uploadedDates, confirmedMeals };
 }
 
 function foodKey(food) {
@@ -149,6 +168,25 @@ function mergeFoods(existingFoods, incomingFoods, mutations) {
   }).slice(0, 500);
 }
 
+async function saveSharedFoods(incomingFoods, mutations) {
+  let foodCount = 0;
+  await db.runTransaction(async (transaction) => {
+    const document = transaction.collection(COLLECTIONS.foods).doc(SHARED_FOOD_DOCUMENT);
+    const result = await document.get();
+    const existing = result && result.data ? result.data : null;
+    const foods = mergeFoods(existing && existing.foods, incomingFoods, mutations);
+    await document.set({
+      data: {
+        scope: "shared",
+        foods,
+        updatedAt: db.serverDate()
+      }
+    });
+    foodCount = foods.length;
+  }, 5);
+  return foodCount;
+}
+
 exports.main = async (event = {}) => {
   const wxContext = cloud.getWXContext();
   const openid = wxContext.OPENID;
@@ -165,6 +203,8 @@ exports.main = async (event = {}) => {
     .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date)
       && Object.prototype.hasOwnProperty.call(dailyMeals, date)
       && Array.isArray(dailyMeals[date])))];
+  const mealBases = event.mealBases && typeof event.mealBases === "object" && !Array.isArray(event.mealBases)
+    ? event.mealBases : {};
   const todayDate = /^\d{4}-\d{2}-\d{2}$/.test(String(event.todayDate || "")) ? event.todayDate : "";
   const syncScope = ["foods", "calendar"].includes(event.syncScope) ? event.syncScope : "all";
   const energyUnit = event.energyUnit === "kJ" ? "kJ" : "kcal";
@@ -172,8 +212,8 @@ exports.main = async (event = {}) => {
 
   if (syncScope === "calendar") {
     await ensureCollection(COLLECTIONS.dailyMeals);
-    const uploadedDates = await saveDailyRecord(openid, dailyMeals, incomingSummaries, todayDate, todayMeals, overwriteDates);
-    return { ok: true, openid, uploadedDates };
+    const saved = await saveDailyRecord(openid, dailyMeals, incomingSummaries, todayDate, todayMeals, overwriteDates, mealBases);
+    return { ok: true, openid, ...saved };
   }
 
   const collectionResults = await Promise.all(Object.keys(COLLECTIONS).map((key) => ensureCollection(COLLECTIONS[key])));
@@ -182,30 +222,24 @@ exports.main = async (event = {}) => {
     ...(Array.isArray(event.foodMutations) ? event.foodMutations : []),
     ...(event.foodMutation ? [event.foodMutation] : [])
   ].slice(-100);
-  const sharedFoods = mergeFoods(
+  let foodCount = mergeFoods(
     sharedFoodDoc && sharedFoodDoc.foods,
     foods,
     foodMutations
-  );
+  ).length;
+  if (foodMutations.length || (!sharedFoodDoc && foodCount)) {
+    foodCount = await saveSharedFoods(foods, foodMutations);
+  }
   if (syncScope === "foods") {
-    if (foodMutations.length || (!sharedFoodDoc && sharedFoods.length)) {
-      await db.collection(COLLECTIONS.foods).doc(SHARED_FOOD_DOCUMENT).set({
-        data: {
-          scope: "shared",
-          foods: sharedFoods,
-          updatedAt
-        }
-      });
-    }
     return {
       ok: true,
       openid,
       collections: collectionResults,
-      foodCount: sharedFoods.length,
+      foodCount,
       mealCount: 0
     };
   }
-  await saveDailyRecord(openid, dailyMeals, incomingSummaries, todayDate, todayMeals, overwriteDates);
+  const saved = await saveDailyRecord(openid, dailyMeals, incomingSummaries, todayDate, todayMeals, overwriteDates, mealBases);
 
   const writes = [
     db.collection(COLLECTIONS.profile).doc(openid).set({
@@ -217,22 +251,14 @@ exports.main = async (event = {}) => {
       }
     })
   ];
-  if (foodMutations.length || (!sharedFoodDoc && sharedFoods.length)) {
-    writes.push(db.collection(COLLECTIONS.foods).doc(SHARED_FOOD_DOCUMENT).set({
-      data: {
-        scope: "shared",
-        foods: sharedFoods,
-        updatedAt
-      }
-    }));
-  }
   await Promise.all(writes);
 
   return {
     ok: true,
     openid,
     collections: collectionResults,
-    foodCount: sharedFoods.length,
-    mealCount: todayMeals.length
+    foodCount,
+    mealCount: todayMeals.length,
+    ...saved
   };
 };
