@@ -4,6 +4,7 @@ const diet = require("./diet");
 const syncTimers = {};
 const pendingSyncPayloads = {};
 let calendarRefreshState = null;
+let profileRefreshState = null;
 let cloudWriteTail = Promise.resolve();
 let retryPromise = null;
 let retryTimer = null;
@@ -45,6 +46,7 @@ function clearStoredUser() {
 function logoutAndClearLocalHistory() {
   sessionEpoch += 1;
   calendarRefreshState = null;
+  profileRefreshState = null;
   retryPromise = null;
   if (retryTimer) clearTimeout(retryTimer);
   retryTimer = null;
@@ -65,7 +67,8 @@ function logoutAndClearLocalHistory() {
     "dietLastSyncPayload",
     "dietProfile",
     "dietDayType",
-    "dietEnergyUnit"
+    "dietEnergyUnit",
+    "dietPendingProfileChanges"
   ].forEach((key) => wx.removeStorageSync(key));
 }
 
@@ -104,8 +107,10 @@ function resolveOpenId() {
 
 function hasPendingSync() {
   const pendingFoods = wx.getStorageSync("dietPendingFoodMutations");
+  const pendingProfile = wx.getStorageSync("dietPendingProfileChanges");
   const user = getStoredUser();
   return !!(user && user.openid && diet.readDirtyMealDates().length > 0)
+    || !!(user && user.openid && pendingProfile && Object.keys(pendingProfile).length)
     || (Array.isArray(pendingFoods) && pendingFoods.length > 0)
     || !!wx.getStorageSync("dietFoodCatalogDirty");
 }
@@ -126,6 +131,10 @@ function retryPendingSync() {
   const user = getStoredUser();
   if (user && user.openid && diet.readDirtyMealDates().length) {
     tasks.push(refreshCalendarHistory());
+  }
+  const pendingProfile = wx.getStorageSync("dietPendingProfileChanges");
+  if (user && user.openid && pendingProfile && Object.keys(pendingProfile).length) {
+    tasks.push(syncDietData({ syncScope: "profile", ...pendingProfile }));
   }
   const pendingFoods = wx.getStorageSync("dietPendingFoodMutations");
   if (wx.getStorageSync("dietFoodCatalogDirty")
@@ -197,6 +206,59 @@ function applyConfirmedMealDates(sentMeals, confirmedMeals, dates) {
   }
 }
 
+function hydrateCloudProfile(cloudData) {
+  const pending = wx.getStorageSync("dietPendingProfileChanges") || {};
+  const localProfile = diet.readProfile();
+  const remoteProfile = cloudData && cloudData.profile && typeof cloudData.profile === "object"
+    ? cloudData.profile : null;
+  const nextProfile = remoteProfile
+    ? { ...localProfile, ...remoteProfile, ...(pending.profilePatch || {}) }
+    : localProfile;
+  const remoteUnit = cloudData && ["kcal", "kJ"].includes(cloudData.energyUnit)
+    ? cloudData.energyUnit : "";
+  const nextUnit = pending.energyUnitPatch || remoteUnit || diet.readEnergyUnit();
+  const changed = Object.keys(nextProfile).some((key) => nextProfile[key] !== localProfile[key])
+    || nextUnit !== diet.readEnergyUnit();
+  if (!changed) return false;
+  diet.saveProfile(nextProfile);
+  diet.setStorage("dietEnergyUnit", nextUnit);
+  if (typeof getCurrentPages === "function") {
+    getCurrentPages().forEach((page) => {
+      if (page && typeof page.refreshFromCloud === "function") page.refreshFromCloud();
+    });
+  }
+  return true;
+}
+
+function refreshDietProfile() {
+  const user = getStoredUser();
+  if (!user || !user.openid) {
+    return Promise.resolve({ localOnly: true, message: "登录后可同步个人资料" });
+  }
+  const epoch = sessionEpoch;
+  if (profileRefreshState && profileRefreshState.epoch === epoch
+    && profileRefreshState.openid === user.openid) return profileRefreshState.promise;
+  const state = { epoch, openid: user.openid, promise: null };
+  state.promise = callCloudFunction("getDietData", { scope: "profile" }).then((response) => {
+    const current = getStoredUser();
+    if (epoch !== sessionEpoch || !current || current.openid !== user.openid) {
+      return { localOnly: true, message: "登录会话已变化" };
+    }
+    const result = response && response.result;
+    if (!result || result.ok !== true || result.openid !== user.openid) {
+      return { localOnly: true, message: "云端资料读取失败" };
+    }
+    return { localOnly: false, updated: hydrateCloudProfile(result) };
+  }).catch((error) => ({
+    localOnly: true,
+    message: error && (error.errMsg || error.message) ? `云端资料读取失败：${error.errMsg || error.message}` : "云端资料读取失败"
+  })).finally(() => {
+    if (profileRefreshState === state) profileRefreshState = null;
+  });
+  profileRefreshState = state;
+  return state.promise;
+}
+
 function refreshCalendarHistory(onRead) {
   const user = getStoredUser();
   if (!user || !user.openid) {
@@ -219,6 +281,8 @@ function refreshCalendarHistory(onRead) {
     if (cloudData.openid !== user.openid) {
       return { localOnly: true, message: "云端账号不一致，请重新登录" };
     }
+
+    hydrateCloudProfile(cloudData);
 
     const today = diet.dateKey();
     const localTodayMeals = diet.readTodayMeals();
@@ -355,6 +419,8 @@ function buildDietPayload(payload = {}) {
     todayDate: diet.dateKey(),
     overwriteDates: diet.readDirtyMealDates(),
     mealBases: diet.readMealBases(),
+    profilePatch: payload.profilePatch || {},
+    energyUnitPatch: payload.energyUnitPatch || "",
     foodMutation: payload.foodMutation || null,
     foodMutations: Array.isArray(payload.foodMutations) ? payload.foodMutations : [],
     syncScope: payload.syncScope || "all",
@@ -428,10 +494,24 @@ function syncDietData(payload = {}) {
         throw new Error("云端未确认写入");
       }
       if (epoch !== sessionEpoch) throw new Error("登录账号已变化");
-      if (!foodOnly) {
+      if (data.syncScope === "all" || data.syncScope === "meals" || data.syncScope === "calendar") {
         applyConfirmedMealDates(data.dailyMeals,
           detail.confirmedMeals && typeof detail.confirmedMeals === "object" ? detail.confirmedMeals : data.dailyMeals,
           data.overwriteDates);
+      }
+      if (data.syncScope === "profile") {
+        const pending = wx.getStorageSync("dietPendingProfileChanges") || {};
+        const remainingPatch = { ...(pending.profilePatch || {}) };
+        Object.keys(data.profilePatch).forEach((key) => {
+          if (remainingPatch[key] === data.profilePatch[key]) delete remainingPatch[key];
+        });
+        const remainingUnit = pending.energyUnitPatch === data.energyUnitPatch ? "" : pending.energyUnitPatch;
+        if (Object.keys(remainingPatch).length || remainingUnit) {
+          wx.setStorageSync("dietPendingProfileChanges", { profilePatch: remainingPatch, energyUnitPatch: remainingUnit });
+        } else {
+          wx.removeStorageSync("dietPendingProfileChanges");
+        }
+        hydrateCloudProfile(detail);
       }
       if (foodOnly) {
         const sentMutations = [
@@ -470,8 +550,15 @@ function syncDietData(payload = {}) {
 }
 
 function queueSyncDietData(payload = {}, delay = 700) {
-  const channel = payload.syncChannel || "diet";
+  const channel = payload.syncChannel || (payload.syncScope === "profile" ? "profile" : "diet");
   const previous = pendingSyncPayloads[channel] || {};
+  if (payload.syncScope === "profile" && getStoredUser()) {
+    const pending = wx.getStorageSync("dietPendingProfileChanges") || {};
+    wx.setStorageSync("dietPendingProfileChanges", {
+      profilePatch: { ...(pending.profilePatch || {}), ...(payload.profilePatch || {}) },
+      energyUnitPatch: payload.energyUnitPatch || pending.energyUnitPatch || ""
+    });
+  }
   const foodMutations = [
     ...(Array.isArray(previous.foodMutations) ? previous.foodMutations : []),
     ...(previous.foodMutation ? [previous.foodMutation] : []),
@@ -481,6 +568,7 @@ function queueSyncDietData(payload = {}, delay = 700) {
   pendingSyncPayloads[channel] = {
     ...previous,
     ...payload,
+    profilePatch: { ...(previous.profilePatch || {}), ...(payload.profilePatch || {}) },
     foodMutation: null,
     foodMutations
   };
@@ -501,6 +589,7 @@ module.exports = {
   loginWithWechat,
   logoutAndClearLocalHistory,
   queueSyncDietData,
+  refreshDietProfile,
   refreshCalendarHistory,
   retryPendingSync,
   syncDietData

@@ -1,5 +1,6 @@
 const diet = require("../../utils/diet");
 const cloudSync = require("../../utils/cloud-sync");
+const PROFILE_REFRESH_MS = 15000;
 
 Page({
   data: {
@@ -30,6 +31,8 @@ Page({
   },
 
   onShow() {
+    const viewEpoch = this.viewEpoch = (this.viewEpoch || 0) + 1;
+    this.stopProfileRefresh();
     const profile = diet.readProfile();
     const resultDay = wx.getStorageSync("dietDayType") || "training";
     const user = cloudSync.getStoredUser();
@@ -52,6 +55,70 @@ Page({
       showPredictionResult: this.data.predictionReady
     });
     if (this.data.predictionReady) this.renderPrediction();
+    if (!user) return Promise.resolve();
+    this.startProfileRefresh(user.openid, viewEpoch);
+    return cloudSync.refreshCalendarHistory().then((result) => {
+      if (this.viewEpoch === viewEpoch && !result.localOnly) this.refreshFromCloud();
+    });
+  },
+
+  onHide() {
+    this.viewEpoch = (this.viewEpoch || 0) + 1;
+    this.stopProfileRefresh();
+    this.profileInputFocused = false;
+  },
+
+  onUnload() {
+    this.stopProfileRefresh();
+  },
+
+  startProfileRefresh(openid, viewEpoch) {
+    this.profileRefreshTimer = setInterval(() => {
+      const user = cloudSync.getStoredUser();
+      if (this.viewEpoch !== viewEpoch || !user || user.openid !== openid) return;
+      cloudSync.refreshDietProfile().then((result) => {
+        if (this.viewEpoch !== viewEpoch) return;
+        if (result.localOnly) {
+          this.setData({ loginStatus: result.message || "个人资料同步失败" });
+          return;
+        }
+        if (result.updated) this.refreshFromCloud();
+        if (result.updated || String(this.data.loginStatus || "").includes("失败")) {
+          this.setData({ loginStatus: "个人资料已从云端同步" });
+        }
+      });
+    }, PROFILE_REFRESH_MS);
+    if (this.profileRefreshTimer && typeof this.profileRefreshTimer.unref === "function") {
+      this.profileRefreshTimer.unref();
+    }
+  },
+
+  stopProfileRefresh() {
+    if (this.profileRefreshTimer) clearInterval(this.profileRefreshTimer);
+    this.profileRefreshTimer = null;
+  },
+
+  refreshFromCloud() {
+    if (this.profileInputFocused) return;
+    const profile = diet.readProfile();
+    this.setData({
+      profile,
+      weightInput: String(profile.weight),
+      sexIndex: profile.sex === "female" ? 1 : 0,
+      sexLabel: profile.sex === "female" ? "女" : "男",
+      planIndex: profile.plan === "loss" ? 1 : 0,
+      planLabel: profile.plan === "loss" ? "减脂" : "增肌"
+    });
+    if (this.data.predictionReady) this.renderPrediction();
+  },
+
+  beginProfileEdit() {
+    this.profileInputFocused = true;
+  },
+
+  endProfileEdit() {
+    this.profileInputFocused = false;
+    this.refreshFromCloud();
   },
 
   async toggleLogin() {
@@ -76,6 +143,7 @@ Page({
         }
       }
       cloudSync.logoutAndClearLocalHistory();
+      this.stopProfileRefresh();
       const profile = diet.readProfile();
       this.setData({
         profile,
@@ -143,7 +211,9 @@ Page({
         diet.saveTodayMeals(cloudTodayMeals, { fromCloud: true });
       }
       if (cloudEnergyUnit) diet.setStorage("dietEnergyUnit", cloudEnergyUnit);
-      if (cloudData) syncResult = await cloudSync.syncDietData();
+      if (cloudData) syncResult = await cloudSync.syncDietData({
+        syncScope: cloudData.hasProfileData ? "meals" : "all"
+      });
       this.setData({
         profile,
         weightInput: String(profile.weight),
@@ -198,7 +268,7 @@ Page({
   },
 
   blurWeight() {
-    this.setData({ weightInput: String(this.data.profile.weight) });
+    this.endProfileEdit();
   },
 
   updateProfile(patch, extra = {}) {
@@ -206,12 +276,8 @@ Page({
     diet.saveProfile(profile);
     this.setData({ profile, ...extra });
     cloudSync.queueSyncDietData({
-      profile,
-      foods: diet.readFoodCatalog(),
-      todayMeals: diet.readTodayMeals(),
-      dailyMeals: diet.readDailyMealHistory(),
-      dailySummaries: diet.buildDailySummaries(),
-      energyUnit: diet.readEnergyUnit()
+      syncScope: "profile",
+      profilePatch: patch
     });
   },
 

@@ -187,6 +187,27 @@ async function saveSharedFoods(incomingFoods, mutations) {
   return foodCount;
 }
 
+async function saveProfile(openid, patch, energyUnitPatch, createOnly = false) {
+  let saved = null;
+  await db.runTransaction(async (transaction) => {
+    const document = transaction.collection(COLLECTIONS.profile).doc(openid);
+    const result = await document.get();
+    const existing = result && result.data ? result.data : null;
+    if (createOnly && existing) {
+      saved = existing;
+      return;
+    }
+    saved = {
+      openid,
+      profile: { ...((existing && existing.profile) || {}), ...patch },
+      energyUnit: energyUnitPatch || (existing && existing.energyUnit) || "kcal",
+      updatedAt: db.serverDate()
+    };
+    await document.set({ data: saved });
+  }, 5);
+  return saved;
+}
+
 exports.main = async (event = {}) => {
   const wxContext = cloud.getWXContext();
   const openid = wxContext.OPENID;
@@ -206,11 +227,19 @@ exports.main = async (event = {}) => {
   const mealBases = event.mealBases && typeof event.mealBases === "object" && !Array.isArray(event.mealBases)
     ? event.mealBases : {};
   const todayDate = /^\d{4}-\d{2}-\d{2}$/.test(String(event.todayDate || "")) ? event.todayDate : "";
-  const syncScope = ["foods", "calendar"].includes(event.syncScope) ? event.syncScope : "all";
+  const syncScope = ["foods", "calendar", "meals", "profile"].includes(event.syncScope) ? event.syncScope : "all";
   const energyUnit = event.energyUnit === "kJ" ? "kJ" : "kcal";
-  const updatedAt = db.serverDate();
 
-  if (syncScope === "calendar") {
+  if (syncScope === "profile") {
+    await ensureCollection(COLLECTIONS.profile);
+    const patch = event.profilePatch && typeof event.profilePatch === "object" && !Array.isArray(event.profilePatch)
+      ? event.profilePatch : {};
+    const unitPatch = ["kcal", "kJ"].includes(event.energyUnitPatch) ? event.energyUnitPatch : "";
+    const saved = await saveProfile(openid, patch, unitPatch);
+    return { ok: true, openid, profile: saved.profile, energyUnit: saved.energyUnit };
+  }
+
+  if (syncScope === "calendar" || syncScope === "meals") {
     await ensureCollection(COLLECTIONS.dailyMeals);
     const saved = await saveDailyRecord(openid, dailyMeals, incomingSummaries, todayDate, todayMeals, overwriteDates, mealBases);
     return { ok: true, openid, ...saved };
@@ -241,17 +270,7 @@ exports.main = async (event = {}) => {
   }
   const saved = await saveDailyRecord(openid, dailyMeals, incomingSummaries, todayDate, todayMeals, overwriteDates, mealBases);
 
-  const writes = [
-    db.collection(COLLECTIONS.profile).doc(openid).set({
-      data: {
-        openid,
-        profile,
-        energyUnit,
-        updatedAt
-      }
-    })
-  ];
-  await Promise.all(writes);
+  await saveProfile(openid, profile, energyUnit, true);
 
   return {
     ok: true,

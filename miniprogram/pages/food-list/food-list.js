@@ -211,8 +211,8 @@ Page({
     this.setData({ unit, "newFood.energy": newFoodEnergy });
     this.renderFoods();
     cloudSync.queueSyncDietData({
-      profile: diet.readProfile(),
-      energyUnit: unit
+      syncScope: "profile",
+      energyUnitPatch: unit
     });
   },
 

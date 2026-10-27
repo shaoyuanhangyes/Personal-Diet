@@ -6,16 +6,20 @@ const vm = require("node:vm");
 
 const root = path.join(__dirname, "..", "miniprogram");
 
-function loadCloudFunction(name, { openid = "user-a", readError = null } = {}) {
+function loadCloudFunction(name, { openid = "user-a", readError = null, beforeTransaction = null } = {}) {
   const writes = [];
   const reads = [];
   const documents = new Map();
   let transactionQueue = Promise.resolve();
+  let transactionStarted = false;
   const db = {
     createCollection: async () => {},
     serverDate: () => new Date(),
     runTransaction(run) {
-      const pending = transactionQueue.then(() => run({
+      const pending = transactionQueue.then(() => {
+        if (!transactionStarted && beforeTransaction) beforeTransaction(documents);
+        transactionStarted = true;
+        return run({
         collection(name) {
           return {
             doc(id) {
@@ -33,7 +37,8 @@ function loadCloudFunction(name, { openid = "user-a", readError = null } = {}) {
             }
           };
         }
-      }));
+        });
+      });
       transactionQueue = pending.catch(() => {});
       return pending;
     },
@@ -61,6 +66,7 @@ function loadCloudFunction(name, { openid = "user-a", readError = null } = {}) {
             },
             async remove() {
               writes.push({ collection, id, remove: true });
+              documents.delete(`${collection}/${id}`);
             }
           };
         }
@@ -115,6 +121,73 @@ test("a new user's missing documents still allow initial synchronization", async
   await service.main({ todayDate: "2026-10-22", todayMeals: [], dailyMeals: {} });
   assert.ok(service.writes.some((write) => write.collection === "diet_user_profiles" && write.id === "user-a"));
   assert.ok(service.writes.some((write) => write.collection === "diet_daily_meals" && write.id === "user-a"));
+});
+
+test("meal-only sync cannot overwrite a profile changed on another device", async () => {
+  const service = loadCloudFunction("syncDietData");
+  service.documents.set("diet_user_profiles/user-a", {
+    openid: "user-a", profile: { weight: 72, plan: "loss" }, energyUnit: "kJ"
+  });
+  const date = "2026-10-20";
+  await service.main({ syncScope: "meals", profile: { weight: 70, plan: "gain" },
+    energyUnit: "kcal", dailyMeals: { [date]: [] }, overwriteDates: [date] });
+  const saved = service.documents.get("diet_user_profiles/user-a");
+  assert.equal(saved.profile.weight, 72);
+  assert.equal(saved.energyUnit, "kJ");
+  assert.deepEqual(service.writes.map((write) => write.collection), ["diet_daily_meals"]);
+});
+
+test("profile patches preserve other device fields and never write meals", async () => {
+  const service = loadCloudFunction("syncDietData");
+  service.documents.set("diet_user_profiles/user-a", {
+    openid: "user-a", profile: { weight: 70, height: 180, plan: "gain" }, energyUnit: "kJ"
+  });
+  await service.main({ syncScope: "profile", profilePatch: { weight: 72 }, energyUnit: "kcal" });
+  await service.main({ syncScope: "profile", profilePatch: { plan: "loss" }, energyUnitPatch: "kcal" });
+  const saved = service.documents.get("diet_user_profiles/user-a");
+  assert.deepEqual({ ...saved.profile }, { weight: 72, height: 180, plan: "loss" });
+  assert.equal(saved.energyUnit, "kcal");
+  assert.ok(service.writes.every((write) => write.collection === "diet_user_profiles"));
+});
+
+test("legacy all-scope sync only creates a missing profile", async () => {
+  const service = loadCloudFunction("syncDietData");
+  service.documents.set("diet_user_profiles/user-a", {
+    openid: "user-a", profile: { weight: 72 }, energyUnit: "kJ"
+  });
+  await service.main({ profile: { weight: 70 }, energyUnit: "kcal" });
+  assert.equal(service.documents.get("diet_user_profiles/user-a").profile.weight, 72);
+  assert.equal(service.documents.get("diet_user_profiles/user-a").energyUnit, "kJ");
+});
+
+test("legacy catalog migration merges the latest shared catalog inside its transaction", async () => {
+  const original = { id: "original", name: "苹果", unit: "个" };
+  const concurrent = { id: "concurrent", name: "梨", unit: "个" };
+  const legacy = { id: "legacy", name: "香蕉", unit: "个" };
+  const service = loadCloudFunction("getDietData", {
+    beforeTransaction(documents) {
+      documents.set("diet_food_catalogs/shared", { foods: [original, concurrent] });
+    }
+  });
+  service.documents.set("diet_food_catalogs/shared", { foods: [original] });
+  service.documents.set("diet_food_catalogs/user-a", { foods: [legacy] });
+  const result = await service.main();
+  assert.deepEqual(Array.from(result.foods, (food) => food.id), ["original", "concurrent", "legacy"]);
+  assert.deepEqual(Array.from(service.documents.get("diet_food_catalogs/shared").foods, (food) => food.id),
+    ["original", "concurrent", "legacy"]);
+  assert.equal(service.documents.has("diet_food_catalogs/user-a"), false);
+});
+
+test("profile-only read does not touch foods or meal collections", async () => {
+  const service = loadCloudFunction("getDietData");
+  service.documents.set("diet_user_profiles/user-a", {
+    openid: "user-a", profile: { weight: 72.125, height: 176, age: 29 }, energyUnit: "kJ"
+  });
+  const result = await service.main({ scope: "profile" });
+  assert.equal(result.profile.weight, 72.125);
+  assert.equal(result.energyUnit, "kJ");
+  assert.deepEqual(service.reads.map((read) => read.collection), ["diet_user_profiles"]);
+  assert.equal(service.writes.length, 0);
 });
 
 test("cloud sync preserves summary-only dates and recalculates dates with meals", async () => {

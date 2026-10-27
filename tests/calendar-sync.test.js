@@ -191,6 +191,34 @@ test("login restores cloud calendar summaries and uploads merged local history",
   assert.equal(diet.readDailySummaries()["2026-10-20"].kcal, 350);
 });
 
+test("login initializes a profile only when the cloud account has none", async () => {
+  storage.clear();
+  wx.showToast = () => {};
+  const originalLogin = cloudSync.loginWithWechat;
+  const originalSync = cloudSync.syncDietData;
+  const scopes = [];
+  cloudSync.loginWithWechat = async () => ({
+    user: { name: "微信用户", openid: "user-a" },
+    syncResult: { message: "已从云端加载数据" },
+    cloudData: { hasProfileData: false, hasFoodData: true, foods: [], dailyMeals: {} }
+  });
+  cloudSync.syncDietData = async (payload) => {
+    scopes.push(payload.syncScope);
+    return { message: "已同步到后台" };
+  };
+  const page = {
+    data: { profile: diet.readProfile(), predictionReady: false },
+    setData(patch) { Object.assign(this.data, patch); }
+  };
+  try {
+    await settingsPage.loginWithWechat.call(page);
+  } finally {
+    cloudSync.loginWithWechat = originalLogin;
+    cloudSync.syncDietData = originalSync;
+  }
+  assert.deepEqual(scopes, ["all"]);
+});
+
 test("login keeps an unsynced local meal instead of replacing it with older cloud data", async () => {
   storage.clear();
   wx.showToast = () => {};
@@ -470,6 +498,126 @@ test("confirmed same-day merge updates local records and clears its saved base",
   assert.equal(`${home.data.totalIntake} kcal`, todayPage.data.summary.kcal);
 });
 
+test("profile-only sync never clears an unsent meal date", async () => {
+  storage.clear();
+  const today = diet.dateKey();
+  storage.set("dietUser", { openid: "user-a" });
+  diet.saveTodayMeals([{ id: "meal", quantity: 100,
+    food: { name: "米饭", unit: "g", coefficient: 1, energy: 100 } }]);
+  global.getApp = () => ({ globalData: { cloudReady: true } });
+  wx.cloud = { callFunction: async ({ name, data }) => {
+    assert.equal(name, "syncDietData");
+    assert.equal(data.syncScope, "profile");
+    return { result: { ok: true, openid: "user-a", profile: { weight: 72 }, energyUnit: "kcal" } };
+  } };
+  await cloudSync.syncDietData({ syncScope: "profile", profilePatch: { weight: 72 } });
+  assert.deepEqual(diet.readDirtyMealDates(), [today]);
+  assert.equal(diet.readTodayMeals()[0].id, "meal");
+});
+
+test("opening settings refreshes weight, height, and age from the same cloud account", async () => {
+  storage.clear();
+  storage.set("dietUser", { openid: "user-a", name: "微信用户" });
+  diet.saveProfile({ ...diet.readProfile(), weight: 70, height: 180, age: 28 });
+  global.getApp = () => ({ globalData: { cloudReady: true } });
+  wx.cloud = { callFunction: async ({ name }) => {
+    assert.equal(name, "getDietData");
+    return { result: {
+      openid: "user-a", profile: { weight: 72.125, height: 176, age: 29 }, energyUnit: "kJ",
+      dailyMeals: {}, dailySummaries: {}
+    } };
+  } };
+  const page = {
+    ...settingsPage,
+    data: { ...settingsPage.data, predictionReady: false },
+    setData(patch) { Object.assign(this.data, patch); }
+  };
+  await page.onShow();
+  assert.equal(diet.readProfile().weight, 72.125);
+  assert.equal(page.data.weightInput, "72.125");
+  assert.equal(page.data.profile.height, 176);
+  assert.equal(page.data.profile.age, 29);
+  assert.equal(diet.readEnergyUnit(), "kJ");
+});
+
+test("cloud profile refresh preserves a pending local weight change", async () => {
+  storage.clear();
+  storage.set("dietUser", { openid: "user-a", name: "微信用户" });
+  diet.saveProfile({ ...diet.readProfile(), weight: 73, height: 180, age: 28 });
+  storage.set("dietPendingProfileChanges", { profilePatch: { weight: 73 }, energyUnitPatch: "kcal" });
+  global.getApp = () => ({ globalData: { cloudReady: true } });
+  wx.cloud = { callFunction: async ({ name }) => {
+    assert.equal(name, "getDietData");
+    return { result: {
+      openid: "user-a", profile: { weight: 72, height: 176, age: 29 }, energyUnit: "kJ",
+      dailyMeals: {}, dailySummaries: {}
+    } };
+  } };
+  await cloudSync.refreshCalendarHistory();
+  assert.equal(diet.readProfile().weight, 73);
+  assert.equal(diet.readProfile().height, 176);
+  assert.equal(diet.readProfile().age, 29);
+  assert.equal(diet.readEnergyUnit(), "kcal");
+});
+
+test("cloud refresh does not replace a weight value while its input is focused", async () => {
+  storage.clear();
+  storage.set("dietUser", { openid: "user-a", name: "微信用户" });
+  diet.saveProfile({ ...diet.readProfile(), weight: 73 });
+  global.getApp = () => ({ globalData: { cloudReady: true } });
+  let finishRead;
+  wx.cloud = { callFunction: () => new Promise((resolve) => { finishRead = resolve; }) };
+  const page = {
+    ...settingsPage,
+    data: { ...settingsPage.data, predictionReady: false },
+    setData(patch) { Object.assign(this.data, patch); }
+  };
+  const opened = page.onShow();
+  page.beginProfileEdit();
+  page.setData({ weightInput: "73." });
+  finishRead({ result: {
+    openid: "user-a", profile: { weight: 72 }, energyUnit: "kcal",
+    dailyMeals: {}, dailySummaries: {}
+  } });
+  await opened;
+  assert.equal(page.data.weightInput, "73.");
+  page.blurWeight();
+  assert.equal(page.data.weightInput, "72");
+});
+
+test("failed profile update stays pending and retries without sending meals", async () => {
+  storage.clear();
+  storage.set("dietUser", { openid: "user-a" });
+  global.getApp = () => ({ globalData: { cloudReady: true } });
+  let fail = true;
+  const calls = [];
+  wx.cloud = { callFunction: async ({ name, data }) => {
+    assert.equal(name, "syncDietData");
+    calls.push(data);
+    if (fail) throw new Error("offline");
+    return { result: { ok: true, openid: "user-a", profile: { weight: 72 }, energyUnit: "kcal" } };
+  } };
+  cloudSync.queueSyncDietData({ syncScope: "profile", profilePatch: { weight: 72 } }, 0);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(storage.get("dietPendingProfileChanges").profilePatch.weight, 72);
+  fail = false;
+  await cloudSync.retryPendingSync();
+  assert.equal(storage.has("dietPendingProfileChanges"), false);
+  assert.deepEqual(calls.map((data) => data.syncScope), ["profile", "profile"]);
+});
+
+test("meal page queues only meal synchronization", () => {
+  const originalQueue = cloudSync.queueSyncDietData;
+  let payload;
+  cloudSync.queueSyncDietData = (value) => { payload = value; };
+  try {
+    todayMealsPage.syncMeals();
+    assert.deepEqual(payload, { syncScope: "meals" });
+  } finally {
+    cloudSync.queueSyncDietData = originalQueue;
+  }
+});
+
 test("deleting a newly added meal while its first upload is in flight records a tombstone", () => {
   storage.clear();
   const today = diet.dateKey();
@@ -688,6 +836,7 @@ test("logging out removes downloaded calendar and today meals from this device",
   } }) };
   wx.showModal = () => { throw new Error("verified logout must not prompt"); };
   const page = {
+    ...settingsPage,
     data: { user: { loggedIn: true }, loginButtonText: "退出" },
     setData(patch) { Object.assign(this.data, patch); }
   };
@@ -700,6 +849,78 @@ test("logging out removes downloaded calendar and today meals from this device",
   assert.equal(diet.readProfile().weight, 75);
   assert.equal(page.data.weightInput, "75");
   assert.equal(page.data.user.loggedIn, false);
+});
+
+test("an open settings page refreshes profile after another device changes it", async () => {
+  storage.clear();
+  storage.set("dietUser", { openid: "user-a", name: "微信用户" });
+  diet.saveProfile({ ...diet.readProfile(), weight: 70, height: 180, age: 28 });
+  global.getApp = () => ({ globalData: { cloudReady: true } });
+  let cloudWeight = 70;
+  const calls = [];
+  wx.cloud = { callFunction: async ({ name, data }) => {
+    calls.push({ name, scope: data && data.scope });
+    return { result: {
+      ok: true, openid: "user-a",
+      profile: { weight: cloudWeight, height: 176, age: 29 }, energyUnit: "kcal",
+      dailyMeals: {}, dailySummaries: {}
+    } };
+  } };
+  const originalSetInterval = global.setInterval;
+  const originalClearInterval = global.clearInterval;
+  let tick;
+  let stopped = false;
+  global.setInterval = (callback) => { tick = callback; return { unref() {} }; };
+  global.clearInterval = () => { stopped = true; };
+  const page = {
+    ...settingsPage,
+    data: { ...settingsPage.data, predictionReady: false },
+    setData(patch) { Object.assign(this.data, patch); }
+  };
+  try {
+    await page.onShow();
+    assert.equal(page.data.profile.weight, 70);
+    cloudWeight = 72.125;
+    tick();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(page.data.profile.weight, 72.125);
+    assert.equal(page.data.weightInput, "72.125");
+    assert.ok(calls.some((call) => call.name === "getDietData" && call.scope === "profile"));
+    page.onHide();
+    assert.equal(stopped, true);
+  } finally {
+    global.setInterval = originalSetInterval;
+    global.clearInterval = originalClearInterval;
+  }
+});
+
+test("profile refresh rejects a response for a different cloud account", async () => {
+  storage.clear();
+  storage.set("dietUser", { openid: "user-a" });
+  diet.saveProfile({ ...diet.readProfile(), weight: 70 });
+  global.getApp = () => ({ globalData: { cloudReady: true } });
+  wx.cloud = { callFunction: async () => ({ result: {
+    ok: true, openid: "user-b", profile: { weight: 95 }, energyUnit: "kJ"
+  } }) };
+  const result = await cloudSync.refreshDietProfile();
+  assert.equal(result.localOnly, true);
+  assert.equal(diet.readProfile().weight, 70);
+  assert.equal(diet.readEnergyUnit(), "kcal");
+});
+
+test("an old profile response cannot restore data after logout", async () => {
+  storage.clear();
+  storage.set("dietUser", { openid: "user-a" });
+  diet.saveProfile({ ...diet.readProfile(), weight: 70 });
+  global.getApp = () => ({ globalData: { cloudReady: true } });
+  let finishRead;
+  wx.cloud = { callFunction: () => new Promise((resolve) => { finishRead = resolve; }) };
+  const refresh = cloudSync.refreshDietProfile();
+  cloudSync.logoutAndClearLocalHistory();
+  finishRead({ result: { ok: true, openid: "user-a", profile: { weight: 95 } } });
+  const result = await refresh;
+  assert.equal(result.localOnly, true);
+  assert.equal(diet.readProfile().weight, 75);
 });
 
 test("logout can be cancelled if cloud history was not verified", async () => {

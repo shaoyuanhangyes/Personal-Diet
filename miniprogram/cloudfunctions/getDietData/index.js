@@ -4,7 +4,7 @@ cloud.init({
   env: cloud.DYNAMIC_CURRENT_ENV
 });
 
-const db = cloud.database();
+const db = cloud.database({ throwOnNotFound: false });
 
 const COLLECTIONS = {
   profile: "diet_user_profiles",
@@ -63,11 +63,47 @@ function normalizeFood(food) {
   };
 }
 
+function mergeFoodLists(sharedFoods, legacyFoods) {
+  const foodMap = new Map();
+  sharedFoods.concat(legacyFoods).forEach((food) => {
+    const key = foodKey(food);
+    if (!foodMap.has(key)) foodMap.set(key, normalizeFood(food));
+  });
+  return Array.from(foodMap.values()).slice(0, 500);
+}
+
+async function migrateLegacyFoods(legacyFoods) {
+  let foods = [];
+  await db.runTransaction(async (transaction) => {
+    const document = transaction.collection(COLLECTIONS.foods).doc(SHARED_FOOD_DOCUMENT);
+    const result = await document.get();
+    const existing = result && result.data ? result.data : null;
+    const current = existing && Array.isArray(existing.foods) ? existing.foods : [];
+    foods = mergeFoodLists(current, legacyFoods);
+    await document.set({
+      data: { scope: "shared", foods, updatedAt: db.serverDate() }
+    });
+  }, 5);
+  return foods;
+}
+
 exports.main = async (event = {}) => {
   const wxContext = cloud.getWXContext();
   const openid = wxContext.OPENID;
   if (!openid) {
     throw new Error("missing openid");
+  }
+
+  if (event.scope === "profile") {
+    await ensureCollection(COLLECTIONS.profile);
+    const profileDoc = await getDocument(COLLECTIONS.profile, openid);
+    return {
+      ok: true,
+      openid,
+      hasProfileData: !!profileDoc,
+      profile: profileDoc && profileDoc.profile ? profileDoc.profile : null,
+      energyUnit: profileDoc && profileDoc.energyUnit ? profileDoc.energyUnit : ""
+    };
   }
 
   const collectionResults = await Promise.all(Object.keys(COLLECTIONS).map((key) => ensureCollection(COLLECTIONS[key])));
@@ -81,20 +117,9 @@ exports.main = async (event = {}) => {
   ]);
   const sharedFoods = sharedFoodDoc && Array.isArray(sharedFoodDoc.foods) ? sharedFoodDoc.foods : [];
   const legacyFoods = legacyFoodDoc && Array.isArray(legacyFoodDoc.foods) ? legacyFoodDoc.foods : [];
-  const foodMap = new Map();
-  sharedFoods.concat(legacyFoods).forEach((food) => {
-    const key = foodKey(food);
-    if (!foodMap.has(key)) foodMap.set(key, normalizeFood(food));
-  });
-  const foods = Array.from(foodMap.values()).slice(0, 500);
+  let foods = mergeFoodLists(sharedFoods, legacyFoods);
   if (legacyFoods.length || foods.length !== sharedFoods.length) {
-    await db.collection(COLLECTIONS.foods).doc(SHARED_FOOD_DOCUMENT).set({
-      data: {
-        scope: "shared",
-        foods,
-        updatedAt: db.serverDate()
-      }
-    });
+    foods = await migrateLegacyFoods(legacyFoods);
     try {
       await db.collection(COLLECTIONS.foods).doc(openid).remove();
     } catch (error) {

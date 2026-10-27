@@ -304,12 +304,7 @@ Page({
 
   syncMeals() {
     cloudSync.queueSyncDietData({
-      profile: diet.readProfile(),
-      foods: diet.readFoodCatalog(),
-      todayMeals: diet.readTodayMeals(),
-      dailyMeals: diet.readDailyMealHistory(),
-      dailySummaries: diet.buildDailySummaries(),
-      energyUnit: diet.readEnergyUnit()
+      syncScope: "meals"
     });
   },
 
